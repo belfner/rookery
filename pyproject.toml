@@ -1,0 +1,40 @@
+[project]
+name = "custom-managed"
+version = "0.1.0"
+description = "Custom package manager for third-party development tools"
+readme = "README.md"
+authors = [
+    { name = "belfner", email = "belfner@belfner.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.20.0",
+    "rich>=13.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+custom-managed = "custom_managed.__main__:app"
+
+[build-system]
+requires = ["uv_build>=0.9.4,<0.10.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "W", "F", "N", "UP", "B", "C4", "PTH", "SIM", "RET"]
+ignore = ["E501"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+disallow_untyped_decorators = false
+files = ["src"]
