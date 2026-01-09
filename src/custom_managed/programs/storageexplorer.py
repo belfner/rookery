@@ -68,11 +68,16 @@ class StorageExplorerProgram(DirectoryProgram):
             return None
 
         return {
-            "Name": "Azure Storage Explorer",
-            "Comment": "Manage Azure Storage resources",
-            "Exec": str(se_dir / "StorageExplorer"),
-            "Terminal": "false",
             "Type": "Application",
+            "Name": "Microsoft Azure Storage Explorer",
+            "GenericName": "Cloud Storage Manager",
+            "Comment": "Manage your Azure Storage accounts, containers, blobs, queues, and tables",
+            "Exec": str(se_dir / "StorageExplorer") + " %U",
             "Icon": str(se_dir / "resources" / "app" / "out" / "app" / "icon.png"),
-            "Categories": "Development;Utility;",
+            "Terminal": "false",
+            "StartupNotify": "true",
+            "Categories": "Development;Utility;Network;",
+            "Keywords": "azure;storage;cloud;blob;container;queue;table;microsoft;",
+            "MimeType": "x-scheme-handler/storageexplorer;",
+            "StartupWMClass": "Microsoft Azure Storage Explorer",
         }
