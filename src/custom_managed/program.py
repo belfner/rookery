@@ -112,6 +112,22 @@ class Program(ABC):
         """
         return None
 
+    def get_man_pages(self) -> dict[str, Path]:
+        """
+        Get man page file paths for system linking.
+
+        Override this method in subclasses to explicitly declare man page locations.
+        Each program should return the exact paths to its man page files.
+
+        Returns
+        -------
+        dict[str, Path]
+            Mapping of man section to man page file paths.
+            Example: {"man1": self.install_dir / "share" / "man" / "man1" / "nvim.1"}
+            Default: empty dict (no man pages).
+        """
+        return {}
+
     def read_version_file(self) -> str:
         """
         Read version from .version file.
