@@ -5,20 +5,31 @@ from __future__ import annotations
 from pathlib import Path
 
 from custom_managed.fetching import Asset
-from custom_managed.program import DirectoryProgram
+from custom_managed.github_utils import get_github_asset_url, get_github_latest_version
+from custom_managed.operations import DownloadArchive, ExtractArchive, InstallOperation
+from custom_managed.program import Program
 
 
-class StorageExplorerProgram(DirectoryProgram):
+class StorageExplorerProgram(Program):
     """Azure Storage Explorer - Manage Azure Storage resources from desktop."""
 
     def __init__(self) -> None:
         """Initialize Azure Storage Explorer program."""
-        super().__init__(
-            name="storageexplorer",
-            github_repo="microsoft/AzureStorageExplorer",
-        )
+        super().__init__(name="storageexplorer")
+        self.github_repo = "microsoft/AzureStorageExplorer"
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    async def get_latest_version(self) -> str:
+        """
+        Get latest version from GitHub releases.
+
+        Returns
+        -------
+        str
+            Latest version string.
+        """
+        return await get_github_latest_version(self.github_repo)
+
+    def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
         Select Linux x64 tarball.
 
@@ -36,6 +47,42 @@ class StorageExplorerProgram(DirectoryProgram):
             if "StorageExplorer-linux-x64" in asset.name and asset.name.endswith(".tar.gz"):
                 return asset
         return None
+
+    async def initialize(self, version: str) -> None:
+        """
+        Initialize installation directory.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+        """
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+
+        Returns
+        -------
+        list[InstallOperation]
+            Operations to execute.
+        """
+        asset_url = await get_github_asset_url(
+            self.github_repo,
+            version,
+            self._select_asset,
+        )
+
+        return [
+            DownloadArchive("storageexplorer", asset_url),
+            ExtractArchive("storageexplorer", "."),
+        ]
 
     def get_binary_paths(self) -> list[Path]:
         """

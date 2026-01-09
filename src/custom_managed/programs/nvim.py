@@ -2,25 +2,34 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from custom_managed.fetching import Asset
-from custom_managed.installer import Installer
-from custom_managed.program import SimpleBinaryProgram
+from custom_managed.github_utils import get_github_asset_url, get_github_latest_version
+from custom_managed.operations import DeletePath, DownloadArchive, ExtractArchive, InstallOperation
+from custom_managed.program import Program
 
 
-class NvimProgram(SimpleBinaryProgram):
+class NvimProgram(Program):
     """Neovim - Hyperextensible Vim-based text editor."""
 
     def __init__(self) -> None:
         """Initialize Neovim program."""
-        super().__init__(
-            name="nvim",
-            github_repo="neovim/neovim",
-        )
+        super().__init__(name="nvim")
+        self.github_repo = "neovim/neovim"
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    async def get_latest_version(self) -> str:
+        """
+        Get latest version from GitHub releases.
+
+        Returns
+        -------
+        str
+            Latest version string.
+        """
+        return await get_github_latest_version(self.github_repo)
+
+    def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
         Select Linux x86_64 tarball.
 
@@ -35,89 +44,51 @@ class NvimProgram(SimpleBinaryProgram):
             Selected asset matching nvim-linux-x86_64.tar.gz pattern.
         """
         for asset in assets:
-            if "nvim-linux-x86_64" in asset.name.lower() and asset.name.endswith(".tar.gz"):
+            if "nvim-linux-x86_64.tar.gz" in asset.name or "nvim-linux64.tar.gz" in asset.name:
                 return asset
         return None
 
-    async def install(self, asset_path: Path, version: str) -> None:
+    async def initialize(self, version: str) -> None:
         """
-        Install nvim from tarball with nested directory structure.
-
-        Archive structure (nvim-linux-x86_64.tar.gz):
-        - bin/nvim - Main binary
-        - lib/nvim/parser/*.so - Tree-sitter parsers
-        - share/nvim/runtime/ - Core runtime (KEEP)
-        - share/man/ - Man pages (KEEP)
-        - share/applications/ - Desktop entries (SKIP)
-        - share/icons/ - Icons (SKIP)
+        Initialize installation directory.
 
         Parameters
         ----------
-        asset_path : Path
-            Path to downloaded tarball.
         version : str
             Version being installed.
         """
-        installer = Installer()
-
-        # Extract to temp directory
-        temp_extract = installer.download_dir / f"{self.name}-extract"
-        temp_extract.mkdir(exist_ok=True)
-        installer.extract_archive(asset_path, temp_extract)
-
-        # Find extracted directory (nvim-linux-x86_64)
-        extracted_dirs = [d for d in temp_extract.iterdir() if d.is_dir()]
-        if not extracted_dirs:
-            raise RuntimeError(f"No directory found after extraction for {self.name}")
-
-        source_dir = extracted_dirs[0]
-
-        # Prepare install directory
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy bin/ directory
-        source_bin = source_dir / "bin"
-        if source_bin.exists():
-            dest_bin = self.install_dir / "bin"
-            if dest_bin.exists():
-                shutil.rmtree(dest_bin)
-            shutil.copytree(source_bin, dest_bin)
-            # Ensure binary is executable
-            nvim_binary = dest_bin / "nvim"
-            if nvim_binary.exists():
-                nvim_binary.chmod(0o755)
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
 
-        # Copy lib/ directory (tree-sitter parsers)
-        source_lib = source_dir / "lib"
-        if source_lib.exists():
-            dest_lib = self.install_dir / "lib"
-            if dest_lib.exists():
-                shutil.rmtree(dest_lib)
-            shutil.copytree(source_lib, dest_lib)
+        Extracts entire nvim archive and removes unwanted directories.
+        Keeps: bin/, lib/, share/nvim/, share/man/
+        Removes: share/applications/, share/icons/
 
-        # Copy share/nvim/ directory (runtime files)
-        source_nvim_share = source_dir / "share" / "nvim"
-        if source_nvim_share.exists():
-            dest_nvim_share = self.install_dir / "share" / "nvim"
-            dest_nvim_share.parent.mkdir(parents=True, exist_ok=True)
-            if dest_nvim_share.exists():
-                shutil.rmtree(dest_nvim_share)
-            shutil.copytree(source_nvim_share, dest_nvim_share)
+        Parameters
+        ----------
+        version : str
+            Version being installed.
 
-        # Copy share/man/ directory (man pages)
-        source_man = source_dir / "share" / "man"
-        if source_man.exists():
-            dest_man = self.install_dir / "share" / "man"
-            dest_man.parent.mkdir(parents=True, exist_ok=True)
-            if dest_man.exists():
-                shutil.rmtree(dest_man)
-            shutil.copytree(source_man, dest_man)
+        Returns
+        -------
+        list[InstallOperation]
+            Operations to execute.
+        """
+        asset_url = await get_github_asset_url(
+            self.github_repo,
+            version,
+            self._select_asset,
+        )
 
-        # Write version file
-        self.write_version_file(version)
-
-        # Cleanup
-        shutil.rmtree(temp_extract)
+        return [
+            DownloadArchive("nvim", asset_url),
+            ExtractArchive("nvim", "."),
+            DeletePath("nvim-linux*/share/applications"),
+            DeletePath("nvim-linux*/share/icons"),
+        ]
 
     def get_binary_paths(self) -> list[Path]:
         """
@@ -126,9 +97,15 @@ class NvimProgram(SimpleBinaryProgram):
         Returns
         -------
         list[Path]
-            List containing path to bin/nvim.
+            List containing path to bin/nvim inside extracted directory.
         """
-        return [self.install_dir / "bin" / "nvim"]
+        # Nvim extracts to nvim-linux-x86_64/ subdirectory
+        for subdir in self.install_dir.glob("nvim-linux*"):
+            if subdir.is_dir():
+                nvim_binary = subdir / "bin" / "nvim"
+                if nvim_binary.exists():
+                    return [nvim_binary]
+        return []
 
     def get_man_pages(self) -> dict[str, Path]:
         """
@@ -139,6 +116,9 @@ class NvimProgram(SimpleBinaryProgram):
         dict[str, Path]
             Mapping of man section to man page file path.
         """
-        return {
-            "man1": self.install_dir / "share" / "man" / "man1" / "nvim.1",
-        }
+        for subdir in self.install_dir.glob("nvim-linux*"):
+            if subdir.is_dir():
+                man_page = subdir / "share" / "man" / "man1" / "nvim.1"
+                if man_page.exists():
+                    return {"man1": man_page}
+        return {}

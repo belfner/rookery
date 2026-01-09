@@ -406,8 +406,9 @@ class SystemLinker:
         """
         Setup system integration for program including man pages.
 
-        Creates symlinks for all binaries, desktop entry if applicable, and man pages.
-        Only creates links if program is installed.
+        Creates symlinks for binaries, desktop entry, and man pages only if
+        they are missing or incorrect. Idempotent - running multiple times
+        only creates links that need creation.
 
         Parameters
         ----------
@@ -418,29 +419,62 @@ class SystemLinker:
         -------
         dict[str, bool]
             Results dictionary with keys "symlinks", "desktop", and "man".
+            True indicates NEW links were created, False means all existed.
         """
         results = {"symlinks": False, "desktop": False, "man": False}
 
         # Check if program is installed
-        if not program.install_dir.exists():
+        if not program.version_file.exists():
             return results
 
-        # Create symlinks for binaries
+        # Check each binary symlink
         for binary_path in program.get_binary_paths():
-            if binary_path.exists():
+            if not binary_path.exists():
+                continue
+
+            link_path = self.bin_dir / binary_path.name
+            needs_create = False
+
+            # Check if link is missing or incorrect
+            if not link_path.exists() and not link_path.is_symlink():
+                needs_create = True
+            elif link_path.is_symlink():
+                try:
+                    if link_path.resolve() != binary_path.resolve():
+                        needs_create = True  # Points to wrong location
+                except (OSError, RuntimeError):
+                    needs_create = True  # Broken symlink
+
+            if needs_create:
                 self.create_binary_symlink(binary_path)
                 results["symlinks"] = True
 
-        # Create desktop entry if applicable
+        # Check desktop entry
         desktop_entry = program.get_desktop_entry()
         if desktop_entry is not None:
-            self.create_desktop_entry(program.name, desktop_entry)
-            results["desktop"] = True
+            desktop_file = self.desktop_dir / f"{program.name}.desktop"
+            if not desktop_file.exists():
+                self.create_desktop_entry(program.name, desktop_entry)
+                results["desktop"] = True
 
-        # Create man page symlinks
-        man_pages = program.get_man_pages()
-        for section, man_page in man_pages.items():
-            if man_page.exists():
+        # Check man page symlinks
+        for section, man_page in program.get_man_pages().items():
+            if not man_page.exists():
+                continue
+
+            link_path = self.man_dir / section / man_page.name
+            needs_create = False
+
+            if not link_path.exists() and not link_path.is_symlink():
+                needs_create = True
+            elif link_path.is_symlink():
+                try:
+                    if link_path.resolve() != man_page.resolve():
+                        needs_create = True
+                except (OSError, RuntimeError):
+                    needs_create = True  # Broken symlink
+
+            if needs_create:
                 self.create_man_symlink(man_page, section)
                 results["man"] = True
 

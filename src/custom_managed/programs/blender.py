@@ -3,21 +3,19 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
-from custom_managed.fetching import Asset, DirectFetcher
-from custom_managed.program import VersionedDirectoryProgram
+from custom_managed.fetching import DirectFetcher
+from custom_managed.operations import DownloadArchive, ExtractArchive, InstallOperation
+from custom_managed.program import Program
 
 
-class BlenderProgram(VersionedDirectoryProgram):
+class BlenderProgram(Program):
     """Blender - Free and open source 3D creation suite."""
 
     def __init__(self) -> None:
         """Initialize Blender program."""
-        super().__init__(
-            name="blender",
-            github_repo="",  # Blender uses download.blender.org, not GitHub
-            symlink_name="blender",
-        )
+        super().__init__(name="blender")
 
     async def get_latest_version(self) -> str:
         """
@@ -59,39 +57,54 @@ class BlenderProgram(VersionedDirectoryProgram):
             # Return latest version
             return sorted(versions, key=lambda x: [int(n) for n in x.split(".")])[-1]
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    async def initialize(self, version: str) -> None:
         """
-        Not used for Blender since it doesn't use GitHub releases.
-
-        Parameters
-        ----------
-        assets : list[Asset]
-            List of available assets.
-
-        Returns
-        -------
-        Asset | None
-            Always returns None.
-        """
-        return None
-
-    def get_download_url(self, version: str) -> str:
-        """
-        Get direct download URL for Blender version.
+        Initialize installation directory.
 
         Parameters
         ----------
         version : str
-            Version to download.
+            Version being installed.
+        """
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
 
         Returns
         -------
-        str
-            Download URL for tarball.
+        list[InstallOperation]
+            Operations to execute.
         """
         major_minor = ".".join(version.split(".")[:2])
-        filename = f"blender-{version}-linux-x64.tar.xz"
-        return f"https://download.blender.org/release/Blender{major_minor}/{filename}"
+        url = f"https://download.blender.org/release/Blender{major_minor}/blender-{version}-linux-x64.tar.xz"
+
+        return [
+            DownloadArchive("blender", url),
+            ExtractArchive("blender", "."),
+        ]
+
+    def get_binary_paths(self) -> list[Path]:
+        """
+        Get path to blender binary.
+
+        Returns
+        -------
+        list[Path]
+            List containing path to blender executable.
+        """
+        # Find blender executable in extracted versioned directory
+        for item in self.install_dir.glob("blender-*-linux-x64"):
+            blender_bin = item / "blender"
+            if blender_bin.exists():
+                return [blender_bin]
+        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """
@@ -99,9 +112,13 @@ class BlenderProgram(VersionedDirectoryProgram):
 
         Returns
         -------
-        dict[str, str]
+        dict[str, str] | None
             Desktop entry fields for Blender.
         """
+        binaries = self.get_binary_paths()
+        if len(binaries) == 0:
+            return None
+
         return {
             "Name": "Blender",
             "Comment": "3D modeling, animation, rendering and post-production",

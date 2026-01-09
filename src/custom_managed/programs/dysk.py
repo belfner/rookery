@@ -2,25 +2,38 @@
 
 from __future__ import annotations
 
-import shutil
 from pathlib import Path
 
 from custom_managed.fetching import Asset
-from custom_managed.installer import Installer
-from custom_managed.program import SimpleBinaryProgram
+from custom_managed.github_utils import get_github_asset_url, get_github_latest_version
+from custom_managed.operations import DownloadArchive, ExtractFiles, InstallOperation
+from custom_managed.program import Program
 
 
-class DyskProgram(SimpleBinaryProgram):
+class DyskProgram(Program):
     """dysk - Get information on your mounted disks with custom version handling."""
+
+    # Declarative file locations
+    binary_files = ["dysk"]
+    man_page_files = {"man1": "dysk.1"}
 
     def __init__(self) -> None:
         """Initialize dysk program."""
-        super().__init__(
-            name="dysk",
-            github_repo="Canop/dysk",
-        )
+        super().__init__(name="dysk")
+        self.github_repo = "Canop/dysk"
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    async def get_latest_version(self) -> str:
+        """
+        Get latest version from GitHub releases.
+
+        Returns
+        -------
+        str
+            Latest version string.
+        """
+        return await get_github_latest_version(self.github_repo)
+
+    def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
         Select Linux zip archive.
 
@@ -39,52 +52,44 @@ class DyskProgram(SimpleBinaryProgram):
                 return asset
         return None
 
-    async def install(self, asset_path: Path, version: str) -> None:
+    async def initialize(self, version: str) -> None:
         """
-        Install dysk from zip archive with nested structure.
+        Initialize installation directory.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+        """
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
 
         dysk extracts to build/x86_64-unknown-linux-gnu/ directory.
 
         Parameters
         ----------
-        asset_path : Path
-            Path to downloaded zip file.
         version : str
             Version being installed (may include letter suffix like "3.6.0b").
+
+        Returns
+        -------
+        list[InstallOperation]
+            Operations to execute.
         """
-        installer = Installer()
+        asset_url = await get_github_asset_url(
+            self.github_repo,
+            version,
+            self._select_asset,
+        )
 
-        # Extract to temp directory
-        temp_extract = installer.download_dir / f"{self.name}-extract"
-        temp_extract.mkdir(exist_ok=True)
-        installer.extract_archive(asset_path, temp_extract)
-
-        # dysk extracts to build/x86_64-unknown-linux-gnu/dysk
-        source_binary = temp_extract / "build" / "x86_64-unknown-linux-gnu" / "dysk"
-        if not source_binary.exists():
-            raise RuntimeError(f"dysk binary not found in expected location: {source_binary}")
-
-        # Copy binary
-        self.install_dir.mkdir(parents=True, exist_ok=True)
-        dest_binary = self.install_dir / "dysk"
-        shutil.copy2(source_binary, dest_binary)
-        dest_binary.chmod(0o755)
-
-        # Copy man page if exists
-        man_source = temp_extract / "build" / "man" / "dysk.1"
-        if man_source.exists():
-            shutil.copy2(man_source, self.install_dir / "dysk.1")
-
-        # Copy completions if they exist
-        comp_source_dir = temp_extract / "build" / "completion"
-        if comp_source_dir.exists():
-            dest_comp = self.install_dir / "completion"
-            if dest_comp.exists():
-                shutil.rmtree(dest_comp)
-            shutil.copytree(comp_source_dir, dest_comp)
-
-        # Write version file (dysk versions can have letter suffixes)
-        self.write_version_file(version)
-
-        # Cleanup
-        shutil.rmtree(temp_extract)
+        return [
+            DownloadArchive("dysk", asset_url),
+            ExtractFiles("dysk", {
+                "build/x86_64-unknown-linux-gnu/dysk": "dysk",
+                "build/man/dysk.1": "dysk.1",
+                "build/completion/*": "completion/",
+            }),
+        ]

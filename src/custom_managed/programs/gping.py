@@ -6,18 +6,22 @@ from pathlib import Path
 
 from custom_managed.fetching import Asset
 from custom_managed.fetching import GitHubFetcher
-from custom_managed.program import SimpleBinaryProgram
+from custom_managed.github_utils import get_github_asset_url
+from custom_managed.operations import DownloadArchive, ExtractFiles, InstallOperation
+from custom_managed.program import Program
 
 
-class GpingProgram(SimpleBinaryProgram):
+class GpingProgram(Program):
     """gping - Ping, but with a graph."""
+
+    # Declarative file locations
+    binary_files = ["gping"]
+    man_page_files = {"man1": "gping.1"}
 
     def __init__(self) -> None:
         """Initialize gping program."""
-        super().__init__(
-            name="gping",
-            github_repo="orf/gping",
-        )
+        super().__init__(name="gping")
+        self.github_repo = "orf/gping"
 
     async def get_latest_version(self) -> str:
         """
@@ -40,7 +44,7 @@ class GpingProgram(SimpleBinaryProgram):
             version = version.lstrip("v")
             return version
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
         Select Linux x86_64 tarball.
 
@@ -59,45 +63,43 @@ class GpingProgram(SimpleBinaryProgram):
                 return asset
         return None
 
-    async def install(self, asset_path: Path, version: str) -> None:
+    async def initialize(self, version: str) -> None:
         """
-        Install gping from tarball with flat file structure.
+        Initialize installation directory.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+        """
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
 
         gping tarballs extract files directly to root, not into a subdirectory.
 
         Parameters
         ----------
-        asset_path : Path
-            Path to downloaded tarball.
         version : str
             Version being installed.
+
+        Returns
+        -------
+        list[InstallOperation]
+            Operations to execute.
         """
-        import shutil
+        asset_url = await get_github_asset_url(
+            self.github_repo,
+            version,
+            self._select_asset,
+        )
 
-        from custom_managed.installer import Installer
-
-        installer = Installer()
-
-        # Extract to temp directory
-        temp_extract = installer.download_dir / f"{self.name}-extract"
-        temp_extract.mkdir(exist_ok=True)
-        installer.extract_archive(asset_path, temp_extract)
-
-        # Copy binary directly from temp_extract root (flat structure)
-        source_binary = temp_extract / "gping"
-        if source_binary.exists():
-            dest_binary = self.install_dir / "gping"
-            self.install_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_binary, dest_binary)
-            dest_binary.chmod(0o755)
-
-        # Copy man page if exists
-        for man_file in temp_extract.glob("gping.*"):
-            if man_file.suffix in (".1", ".8"):
-                shutil.copy2(man_file, self.install_dir / man_file.name)
-
-        # Write version file
-        self.write_version_file(version)
-
-        # Cleanup
-        shutil.rmtree(temp_extract)
+        return [
+            DownloadArchive("gping", asset_url),
+            ExtractFiles("gping", {
+                "gping": "gping",
+                "gping.1": "gping.1",
+            }),
+        ]

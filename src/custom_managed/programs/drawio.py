@@ -2,23 +2,34 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from custom_managed.fetching import Asset
-from custom_managed.program import AppImageProgram
+from custom_managed.github_utils import get_github_asset_url, get_github_latest_version
+from custom_managed.operations import DownloadFile, InstallOperation, MakeExecutable
+from custom_managed.program import Program
 
 
-class DrawioProgram(AppImageProgram):
+class DrawioProgram(Program):
     """draw.io - Professional diagramming application."""
 
     def __init__(self) -> None:
         """Initialize draw.io program."""
-        super().__init__(
-            name="drawio",
-            github_repo="jgraph/drawio-desktop",
-            wrapper_script_name="drawio",
-            needs_no_sandbox=True,
-        )
+        super().__init__(name="drawio")
+        self.github_repo = "jgraph/drawio-desktop"
 
-    async def select_asset(self, assets: list[Asset]) -> Asset | None:
+    async def get_latest_version(self) -> str:
+        """
+        Get latest version from GitHub releases.
+
+        Returns
+        -------
+        str
+            Latest version string.
+        """
+        return await get_github_latest_version(self.github_repo)
+
+    def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
         Select x86_64 AppImage.
 
@@ -36,6 +47,72 @@ class DrawioProgram(AppImageProgram):
             if "drawio-x86_64" in asset.name and asset.name.endswith(".AppImage"):
                 return asset
         return None
+
+    async def initialize(self, version: str) -> None:
+        """
+        Initialize installation directory.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+        """
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+    async def get_install_operations(self, version: str) -> list[InstallOperation]:
+        """
+        Get installation operations.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+
+        Returns
+        -------
+        list[InstallOperation]
+            Operations to execute.
+        """
+        asset_url = await get_github_asset_url(
+            self.github_repo,
+            version,
+            self._select_asset,
+        )
+
+        return [
+            DownloadFile(asset_url, "drawio.AppImage"),
+            MakeExecutable("drawio.AppImage"),
+        ]
+
+    async def create_generated_files(self, version: str) -> None:
+        """
+        Create wrapper script for AppImage.
+
+        Parameters
+        ----------
+        version : str
+            Version being installed.
+        """
+        wrapper_script = self.install_dir / "drawio"
+        wrapper_script.write_text(
+            "#!/bin/bash\n"
+            f'exec "{self.install_dir}/drawio.AppImage" --no-sandbox "$@"\n'
+        )
+        wrapper_script.chmod(0o755)
+
+    def get_binary_paths(self) -> list[Path]:
+        """
+        Get path to wrapper script.
+
+        Returns
+        -------
+        list[Path]
+            List containing path to wrapper script.
+        """
+        wrapper = self.install_dir / "drawio"
+        if wrapper.exists():
+            return [wrapper]
+        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """
