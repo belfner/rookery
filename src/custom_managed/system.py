@@ -304,6 +304,69 @@ class SystemLinker:
 
         return existing
 
+    def links_need_update(self, program: Program) -> bool:
+        """
+        Check if program links need to be created or updated.
+
+        Parameters
+        ----------
+        program : Program
+            Program to check.
+
+        Returns
+        -------
+        bool
+            True if any links are missing or need updating, False if all correct.
+        """
+        # Program not installed, no links needed
+        if not program.install_dir.exists():
+            return False
+
+        # Check binary symlinks
+        binary_paths = program.get_binary_paths()
+        for binary_path in binary_paths:
+            if not binary_path.exists():
+                continue
+            link_path = self.bin_dir / binary_path.name
+            # Link doesn't exist or is broken
+            if not link_path.exists() and not link_path.is_symlink():
+                return True
+            # Link exists but points to wrong location
+            if link_path.is_symlink():
+                try:
+                    if link_path.resolve() != binary_path.resolve():
+                        return True
+                except (OSError, RuntimeError):
+                    # Broken symlink
+                    return True
+
+        # Check desktop entry
+        desktop_entry = program.get_desktop_entry()
+        if desktop_entry is not None:
+            desktop_file = self.desktop_dir / f"{program.name}.desktop"
+            if not desktop_file.exists():
+                return True
+
+        # Check man pages
+        man_pages = program.get_man_pages()
+        for section, man_page in man_pages.items():
+            if not man_page.exists():
+                continue
+            link_path = self.man_dir / section / man_page.name
+            # Link doesn't exist or is broken
+            if not link_path.exists() and not link_path.is_symlink():
+                return True
+            # Link exists but points to wrong location
+            if link_path.is_symlink():
+                try:
+                    if link_path.resolve() != man_page.resolve():
+                        return True
+                except (OSError, RuntimeError):
+                    # Broken symlink
+                    return True
+
+        return False
+
     def remove_program_links(self, program: Program) -> dict[str, bool]:
         """
         Remove all system links for program including man pages.

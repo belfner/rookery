@@ -266,14 +266,35 @@ def update_command(
     Use --force to reinstall even if up to date.
     Use --no-links to skip creating system links (no sudo needed).
     """
-    # Setup sudo if linking enabled
+    # Setup sudo only if linking enabled and links need updating
     sudo_mgr = None
     if not no_links:
-        sudo_mgr = SudoManager()
-        if not sudo_mgr.validate_and_cache():
-            console.print("[red]Error: Failed to validate sudo credentials[/]")
-            console.print("[yellow]Run with --no-links to skip system link creation[/]")
-            raise typer.Exit(1)
+        # Check if any programs need link updates
+        programs_to_check = []
+        if program is not None:
+            try:
+                programs_to_check = [get_program(program)]
+            except KeyError:
+                pass  # Will error later in the normal flow
+        else:
+            programs_to_check = [p for p in list_programs() if p.install_dir.exists()]
+
+        # Check if any links need updating
+        needs_sudo = False
+        if len(programs_to_check) > 0:
+            linker_check = SystemLinker()
+            for prog in programs_to_check:
+                if linker_check.links_need_update(prog):
+                    needs_sudo = True
+                    break
+
+        # Only request sudo if links need updating
+        if needs_sudo:
+            sudo_mgr = SudoManager()
+            if not sudo_mgr.validate_and_cache():
+                console.print("[red]Error: Failed to validate sudo credentials[/]")
+                console.print("[yellow]Run with --no-links to skip system link creation[/]")
+                raise typer.Exit(1)
 
     if program is not None:
         # Update single program
@@ -511,24 +532,52 @@ async def update_programs(programs: list[Program], force: bool = False, sudo_mgr
 
 @app.command(name="uninstall")
 def uninstall_command(
-    program: Annotated[str | None, typer.Argument(help="Program name (optional)")] = None,
+    program: Annotated[str | None, typer.Argument(help="Program name to uninstall (optional)")] = None,
     all_flag: AllFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip removing system links")] = False,
 ) -> None:
     """
     Uninstall program(s) by removing local installation.
 
+    Without arguments, does nothing. Use --all to uninstall all installed programs.
     Removes program files and system links (symlinks, desktop entries, man pages).
     Use --no-links to skip removing system links (no sudo needed).
     """
-    # Setup sudo if linking enabled
+    if (program is None) and not all_flag:
+        console.print("[yellow]Please specify a program name or use --all[/]")
+        console.print("[yellow]Example: custom-managed uninstall nvim[/]")
+        raise typer.Exit(1)
+
+    # Setup sudo only if linking enabled and links exist
     sudo_mgr = None
     if not no_links:
-        sudo_mgr = SudoManager()
-        if not sudo_mgr.validate_and_cache():
-            console.print("[red]Error: Failed to validate sudo credentials[/]")
-            console.print("[yellow]Run with --no-links to skip system link removal[/]")
-            raise typer.Exit(1)
+        # Check if any programs have existing links
+        programs_to_check = []
+        if program is not None:
+            try:
+                programs_to_check = [get_program(program)]
+            except KeyError:
+                pass  # Will error later in the normal flow
+        else:
+            programs_to_check = [p for p in list_programs() if p.install_dir.exists()]
+
+        # Check if any links exist
+        needs_sudo = False
+        if len(programs_to_check) > 0:
+            linker_check = SystemLinker()
+            for prog in programs_to_check:
+                existing = linker_check.get_existing_links(prog)
+                if (len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0):
+                    needs_sudo = True
+                    break
+
+        # Only request sudo if links exist
+        if needs_sudo:
+            sudo_mgr = SudoManager()
+            if not sudo_mgr.validate_and_cache():
+                console.print("[red]Error: Failed to validate sudo credentials[/]")
+                console.print("[yellow]Run with --no-links to skip system link removal[/]")
+                raise typer.Exit(1)
 
     if program is not None:
         # Uninstall single program
@@ -539,7 +588,7 @@ def uninstall_command(
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
     else:
-        # Uninstall all programs
+        # Uninstall all programs (--all flag was used)
         programs = list_programs()
         installed = [p for p in programs if p.install_dir.exists()]
 
@@ -547,15 +596,14 @@ def uninstall_command(
             console.print("[yellow]No programs installed[/]")
             return
 
-        # Confirmation prompt
-        if not all_flag:
-            console.print(f"[yellow]This will uninstall {len(installed)} program(s):[/]")
-            for p in installed:
-                console.print(f"  - {p.name}")
+        # Confirmation prompt for --all
+        console.print(f"[yellow]This will uninstall {len(installed)} program(s):[/]")
+        for p in installed:
+            console.print(f"  - {p.name}")
 
-            if not typer.confirm("\nContinue with uninstall?", default=False):
-                console.print("Cancelled")
-                raise typer.Exit(0)
+        if not typer.confirm("\nContinue with uninstall?", default=False):
+            console.print("Cancelled")
+            raise typer.Exit(0)
 
         uninstall_programs(installed, sudo_mgr=sudo_mgr)
 

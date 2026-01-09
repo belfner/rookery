@@ -46,12 +46,9 @@ class StorageExplorerProgram(DirectoryProgram):
         list[Path]
             List containing path to StorageExplorer executable.
         """
-        # Storage Explorer extracts to StorageExplorer-linux-x64/
-        se_dir = self.install_dir / "StorageExplorer-linux-x64"
-        if se_dir.exists():
-            executable = se_dir / "StorageExplorer"
-            if executable.exists():
-                return [executable]
+        executable = self.install_dir / "StorageExplorer"
+        if executable.exists():
+            return [executable]
         return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
@@ -63,8 +60,8 @@ class StorageExplorerProgram(DirectoryProgram):
         dict[str, str]
             Desktop entry fields for Azure Storage Explorer.
         """
-        se_dir = self.install_dir / "StorageExplorer-linux-x64"
-        if not se_dir.exists():
+        executable = self.install_dir / "StorageExplorer"
+        if not executable.exists():
             return None
 
         return {
@@ -72,8 +69,8 @@ class StorageExplorerProgram(DirectoryProgram):
             "Name": "Microsoft Azure Storage Explorer",
             "GenericName": "Cloud Storage Manager",
             "Comment": "Manage your Azure Storage accounts, containers, blobs, queues, and tables",
-            "Exec": str(se_dir / "StorageExplorer") + " %U",
-            "Icon": str(se_dir / "resources" / "app" / "out" / "app" / "icon.png"),
+            "Exec": str(executable) + " %U",
+            "Icon": str(self.install_dir / "resources" / "app" / "out" / "app" / "icon.png"),
             "Terminal": "false",
             "StartupNotify": "true",
             "Categories": "Development;Utility;Network;",
