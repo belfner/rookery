@@ -15,7 +15,11 @@ from custom_managed.registry import get_program, list_programs
 from custom_managed.sudo import SudoManager
 from custom_managed.system import SystemLinker
 
-app = typer.Typer(name="custom-managed", help="Custom package manager for third-party development tools")
+app = typer.Typer(
+    name="custom-managed",
+    help="Custom package manager for third-party development tools",
+    no_args_is_help=True,
+)
 console = Console()
 
 # Type aliases for common flags
