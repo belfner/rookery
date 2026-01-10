@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import aiohttp
+import httpx
 
 from custom_managed.installer import Installer
 
@@ -72,10 +72,10 @@ class DownloadArchive(InstallOperation):
         filename = self.url.split("/")[-1]
         download_path = context.installer.download_dir / filename
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(self.url) as response:
-                response.raise_for_status()
-                download_path.write_bytes(await response.read())
+        async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+            response = await client.get(self.url)
+            response.raise_for_status()
+            download_path.write_bytes(response.content)
 
         context.downloads[self.operation_id] = download_path
         context.temp_files.append(download_path)
@@ -186,10 +186,10 @@ class DownloadFile(InstallOperation):
         dest = context.install_dir / self.dest_path
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(self.url) as response:
-                response.raise_for_status()
-                dest.write_bytes(await response.read())
+        async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+            response = await client.get(self.url)
+            response.raise_for_status()
+            dest.write_bytes(response.content)
 
 
 class MakeExecutable(InstallOperation):
