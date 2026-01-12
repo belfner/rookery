@@ -14,8 +14,8 @@ class DustProgram(Program):
     """dust - A more intuitive version of du written in Rust."""
 
     # Declarative file locations
-    binary_files = ["dust"]
-    man_page_files = {"man1": "dust.1"}
+    binary_files = [Path("dust")]
+    man_page_files = {"man1": Path("dust.1")}
 
     def __init__(self) -> None:
         """Initialize dust program."""

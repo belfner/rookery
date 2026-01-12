@@ -13,6 +13,9 @@ from custom_managed.program import Program
 class DrawioProgram(Program):
     """draw.io - Professional diagramming application."""
 
+    # Declarative file locations
+    binary_files = [Path("drawio")]
+
     def __init__(self) -> None:
         """Initialize draw.io program."""
         super().__init__(name="drawio")
@@ -99,20 +102,6 @@ class DrawioProgram(Program):
             f'exec "{self.install_dir}/drawio.AppImage" --no-sandbox "$@"\n'
         )
         wrapper_script.chmod(0o755)
-
-    def get_binary_paths(self) -> list[Path]:
-        """
-        Get path to wrapper script.
-
-        Returns
-        -------
-        list[Path]
-            List containing path to wrapper script.
-        """
-        wrapper = self.install_dir / "drawio"
-        if wrapper.exists():
-            return [wrapper]
-        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """

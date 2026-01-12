@@ -13,6 +13,9 @@ from custom_managed.program import Program
 class StorageExplorerProgram(Program):
     """Azure Storage Explorer - Manage Azure Storage resources from desktop."""
 
+    # Declarative file locations
+    binary_files = [Path("StorageExplorer/StorageExplorer")]
+
     def __init__(self) -> None:
         """Initialize Azure Storage Explorer program."""
         super().__init__(name="storageexplorer")
@@ -81,22 +84,8 @@ class StorageExplorerProgram(Program):
 
         return [
             DownloadArchive("storageexplorer", asset_url),
-            ExtractArchive("storageexplorer", "."),
+            ExtractArchive("storageexplorer", extract_to_subdir="StorageExplorer"),
         ]
-
-    def get_binary_paths(self) -> list[Path]:
-        """
-        Get path to Storage Explorer executable.
-
-        Returns
-        -------
-        list[Path]
-            List containing path to StorageExplorer executable.
-        """
-        executable = self.install_dir / "StorageExplorer"
-        if executable.exists():
-            return [executable]
-        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """
@@ -106,10 +95,19 @@ class StorageExplorerProgram(Program):
         -------
         dict[str, str]
             Desktop entry fields for Azure Storage Explorer.
+
+        Raises
+        ------
+        FileNotFoundError
+            If StorageExplorer binary or icon not found at expected location.
         """
-        executable = self.install_dir / "StorageExplorer"
+        executable = self.install_dir / self.binary_files[0]
         if not executable.exists():
-            return None
+            raise FileNotFoundError(f"StorageExplorer binary not found at {executable}")
+        
+        icon_path = self.install_dir / "StorageExplorer" / "resources" / "app" / "out" / "app" / "icon.png"
+        if not icon_path.exists():
+            raise FileNotFoundError(f"StorageExplorer icon not found at {icon_path}")
 
         return {
             "Type": "Application",
@@ -117,7 +115,7 @@ class StorageExplorerProgram(Program):
             "GenericName": "Cloud Storage Manager",
             "Comment": "Manage your Azure Storage accounts, containers, blobs, queues, and tables",
             "Exec": str(executable) + " %U",
-            "Icon": str(self.install_dir / "resources" / "app" / "out" / "app" / "icon.png"),
+            "Icon": str(icon_path),
             "Terminal": "false",
             "StartupNotify": "true",
             "Categories": "Development;Utility;Network;",

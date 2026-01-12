@@ -13,6 +13,10 @@ from custom_managed.program import Program
 class NvimProgram(Program):
     """Neovim - Hyperextensible Vim-based text editor."""
 
+    # Declarative file locations
+    binary_files = [Path("nvim/bin/nvim")]
+    man_page_files = {"man1": Path("nvim/share/man/man1/nvim.1")}
+
     def __init__(self) -> None:
         """Initialize Neovim program."""
         super().__init__(name="nvim")
@@ -85,40 +89,8 @@ class NvimProgram(Program):
 
         return [
             DownloadArchive("nvim", asset_url),
-            ExtractArchive("nvim", "."),
-            DeletePath("nvim-linux*/share/applications"),
-            DeletePath("nvim-linux*/share/icons"),
+            ExtractArchive("nvim", rename_top_level="nvim"),
+            DeletePath("nvim/share/applications"),
+            DeletePath("nvim/share/icons"),
         ]
 
-    def get_binary_paths(self) -> list[Path]:
-        """
-        Get path to nvim binary.
-
-        Returns
-        -------
-        list[Path]
-            List containing path to bin/nvim inside extracted directory.
-        """
-        # Nvim extracts to nvim-linux-x86_64/ subdirectory
-        for subdir in self.install_dir.glob("nvim-linux*"):
-            if subdir.is_dir():
-                nvim_binary = subdir / "bin" / "nvim"
-                if nvim_binary.exists():
-                    return [nvim_binary]
-        return []
-
-    def get_man_pages(self) -> dict[str, Path]:
-        """
-        Get nvim man page paths.
-
-        Returns
-        -------
-        dict[str, Path]
-            Mapping of man section to man page file path.
-        """
-        for subdir in self.install_dir.glob("nvim-linux*"):
-            if subdir.is_dir():
-                man_page = subdir / "share" / "man" / "man1" / "nvim.1"
-                if man_page.exists():
-                    return {"man1": man_page}
-        return {}

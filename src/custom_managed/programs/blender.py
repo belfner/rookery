@@ -13,6 +13,9 @@ from custom_managed.program import Program
 class BlenderProgram(Program):
     """Blender - Free and open source 3D creation suite."""
 
+    # Declarative file locations
+    binary_files = [Path("blender/blender")]
+
     def __init__(self) -> None:
         """Initialize Blender program."""
         super().__init__(name="blender")
@@ -87,24 +90,8 @@ class BlenderProgram(Program):
 
         return [
             DownloadArchive("blender", url),
-            ExtractArchive("blender", "."),
+            ExtractArchive("blender", rename_top_level="blender"),
         ]
-
-    def get_binary_paths(self) -> list[Path]:
-        """
-        Get path to blender binary.
-
-        Returns
-        -------
-        list[Path]
-            List containing path to blender executable.
-        """
-        # Find blender executable in extracted versioned directory
-        for item in self.install_dir.glob("blender-*-linux-x64"):
-            blender_bin = item / "blender"
-            if blender_bin.exists():
-                return [blender_bin]
-        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """
@@ -114,10 +101,15 @@ class BlenderProgram(Program):
         -------
         dict[str, str] | None
             Desktop entry fields for Blender.
+
+        Raises
+        ------
+        FileNotFoundError
+            If blender icon not found at expected location.
         """
-        binaries = self.get_binary_paths()
-        if len(binaries) == 0:
-            return None
+        icon_path = self.install_dir / "blender" / "blender.svg"
+        if not icon_path.exists():
+            raise FileNotFoundError(f"blender icon not found at {icon_path}")
 
         return {
             "Name": "Blender",

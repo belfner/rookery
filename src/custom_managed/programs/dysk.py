@@ -14,8 +14,8 @@ class DyskProgram(Program):
     """dysk - Get information on your mounted disks with custom version handling."""
 
     # Declarative file locations
-    binary_files = ["dysk"]
-    man_page_files = {"man1": "dysk.1"}
+    binary_files = [Path("dysk")]
+    man_page_files = {"man1": Path("dysk.1")}
 
     def __init__(self) -> None:
         """Initialize dysk program."""

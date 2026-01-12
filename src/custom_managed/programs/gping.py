@@ -15,8 +15,8 @@ class GpingProgram(Program):
     """gping - Ping, but with a graph."""
 
     # Declarative file locations
-    binary_files = ["gping"]
-    man_page_files = {"man1": "gping.1"}
+    binary_files = [Path("gping")]
+    man_page_files = {"man1": Path("gping.1")}
 
     def __init__(self) -> None:
         """Initialize gping program."""

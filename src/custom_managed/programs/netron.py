@@ -13,6 +13,9 @@ from custom_managed.program import Program
 class NetronProgram(Program):
     """Netron - Visualizer for neural network, deep learning, and machine learning models."""
 
+    # Declarative file locations
+    binary_files = [Path("netron")]
+
     def __init__(self) -> None:
         """Initialize Netron program."""
         super().__init__(name="netron")
@@ -99,20 +102,6 @@ class NetronProgram(Program):
             f'exec "{self.install_dir}/netron.AppImage" --no-sandbox "$@"\n'
         )
         wrapper_script.chmod(0o755)
-
-    def get_binary_paths(self) -> list[Path]:
-        """
-        Get path to wrapper script.
-
-        Returns
-        -------
-        list[Path]
-            List containing path to wrapper script.
-        """
-        wrapper = self.install_dir / "netron"
-        if wrapper.exists():
-            return [wrapper]
-        return []
 
     def get_desktop_entry(self) -> dict[str, str] | None:
         """

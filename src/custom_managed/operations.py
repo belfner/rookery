@@ -128,7 +128,12 @@ class ExtractFiles(InstallOperation):
 class ExtractArchive(InstallOperation):
     """Extract entire archive to destination."""
 
-    def __init__(self, archive_id: str, dest_subdir: str = "") -> None:
+    def __init__(
+        self,
+        archive_id: str,
+        rename_top_level: str | None = None,
+        extract_to_subdir: str | None = None,
+    ) -> None:
         """
         Initialize archive extraction operation.
 
@@ -136,11 +141,26 @@ class ExtractArchive(InstallOperation):
         ----------
         archive_id : str
             ID of previously downloaded archive.
-        dest_subdir : str
-            Optional subdirectory within install_dir.
+        rename_top_level : str | None
+            If provided, renames the single top-level extracted directory to this name.
+            Use for archives that extract to a single directory (e.g., nvim-linux-x86_64/).
+            Mutually exclusive with extract_to_subdir.
+        extract_to_subdir : str | None
+            If provided, creates this subdirectory and extracts all contents into it.
+            Use for archives with multiple root-level items.
+            Mutually exclusive with rename_top_level.
+
+        Raises
+        ------
+        ValueError
+            If both rename_top_level and extract_to_subdir are specified.
         """
+        if rename_top_level and extract_to_subdir:
+            raise ValueError("rename_top_level and extract_to_subdir are mutually exclusive")
+
         self.archive_id = archive_id
-        self.dest_subdir = dest_subdir
+        self.rename_top_level = rename_top_level
+        self.extract_to_subdir = extract_to_subdir
 
     async def execute(self, context: InstallContext) -> None:
         """
@@ -151,10 +171,35 @@ class ExtractArchive(InstallOperation):
         context : InstallContext
             Installation context.
         """
-        archive_path = context.downloads[self.archive_id]
-        dest_dir = context.install_dir / self.dest_subdir if self.dest_subdir else context.install_dir
+        import shutil
 
+        archive_path = context.downloads[self.archive_id]
+        dest_dir = context.install_dir
+
+        # Handle extract_to_subdir: create wrapper directory and extract into it
+        if self.extract_to_subdir:
+            dest_dir = context.install_dir / self.extract_to_subdir
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            context.installer.extract_archive(archive_path, dest_dir)
+            return
+
+        # Default extraction to install_dir
         context.installer.extract_archive(archive_path, dest_dir)
+
+        # Handle rename_top_level: find single top-level directory and rename it
+        if self.rename_top_level:
+            # Find extracted top-level directories
+            extracted_items = [item for item in dest_dir.iterdir() if item.is_dir()]
+
+            # Should be exactly one top-level directory
+            if len(extracted_items) == 1:
+                old_path = extracted_items[0]
+                new_path = dest_dir / self.rename_top_level
+
+                # Only rename if different
+                if old_path != new_path:
+                    # Use shutil.move for atomic rename
+                    shutil.move(str(old_path), str(new_path))
 
 
 class DownloadFile(InstallOperation):

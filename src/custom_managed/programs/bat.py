@@ -14,8 +14,8 @@ class BatProgram(Program):
     """bat - A cat clone with syntax highlighting and Git integration."""
 
     # Declarative file locations
-    binary_files = ["bat"]
-    man_page_files = {"man1": "bat.1"}
+    binary_files = [Path("bat")]
+    man_page_files = {"man1": Path("bat.1")}
 
     def __init__(self) -> None:
         """Initialize bat program."""

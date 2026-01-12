@@ -285,10 +285,14 @@ class SystemLinker:
         existing: dict[str, list[Path]] = {"symlinks": [], "desktop": [], "man": []}
 
         # Check for symlinks
-        for binary_path in program.get_binary_paths():
-            link_path = self.bin_dir / binary_path.name
-            if link_path.is_symlink() or link_path.exists():
-                existing["symlinks"].append(link_path)
+        try:
+            for binary_path in program.get_binary_paths():
+                link_path = self.bin_dir / binary_path.name
+                if link_path.is_symlink() or link_path.exists():
+                    existing["symlinks"].append(link_path)
+        except FileNotFoundError:
+            # Program not fully installed, skip symlink check
+            pass
 
         # Check for desktop entry
         desktop_file = self.desktop_dir / f"{program.name}.desktop"
@@ -296,11 +300,15 @@ class SystemLinker:
             existing["desktop"].append(desktop_file)
 
         # Check for man pages
-        man_pages = program.get_man_pages()
-        for section, man_page in man_pages.items():
-            link_path = self.man_dir / section / man_page.name
-            if link_path.is_symlink() or link_path.exists():
-                existing["man"].append(link_path)
+        try:
+            man_pages = program.get_man_pages()
+            for section, man_page in man_pages.items():
+                link_path = self.man_dir / section / man_page.name
+                if link_path.is_symlink() or link_path.exists():
+                    existing["man"].append(link_path)
+        except FileNotFoundError:
+            # Program not fully installed, skip man page check
+            pass
 
         return existing
 
@@ -386,19 +394,27 @@ class SystemLinker:
         results = {"symlinks": False, "desktop": False, "man": False}
 
         # Remove binary symlinks
-        for binary_path in program.get_binary_paths():
-            if self.remove_binary_symlink(binary_path.name):
-                results["symlinks"] = True
+        try:
+            for binary_path in program.get_binary_paths():
+                if self.remove_binary_symlink(binary_path.name):
+                    results["symlinks"] = True
+        except FileNotFoundError:
+            # Program not fully installed, skip symlink removal
+            pass
 
         # Remove desktop entry
         if self.remove_desktop_entry(program.name):
             results["desktop"] = True
 
         # Remove man pages
-        man_pages = program.get_man_pages()
-        for section, man_page in man_pages.items():
-            if self.remove_man_symlink(man_page.name, section):
-                results["man"] = True
+        try:
+            man_pages = program.get_man_pages()
+            for section, man_page in man_pages.items():
+                if self.remove_man_symlink(man_page.name, section):
+                    results["man"] = True
+        except FileNotFoundError:
+            # Program not fully installed, skip man page removal
+            pass
 
         return results
 

@@ -14,7 +14,7 @@ class GduProgram(Program):
     """gdu - Fast disk usage analyzer with console interface."""
 
     # Declarative file locations
-    binary_files = ["gdu"]
+    binary_files = [Path("gdu")]
 
     def __init__(self) -> None:
         """Initialize gdu program."""

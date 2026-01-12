@@ -14,7 +14,7 @@ class EzaProgram(Program):
     """eza - A modern, maintained replacement for ls."""
 
     # Declarative file locations
-    binary_files = ["eza"]
+    binary_files = [Path("eza")]
 
     def __init__(self) -> None:
         """Initialize eza program."""

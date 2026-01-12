@@ -29,20 +29,19 @@ class Program(ABC):
 
     Declarative Attributes
     ----------------------
-    binary_files : list[str]
-        List of binary file names relative to install_dir.
+    binary_files : list[Path]
+        List of binary file paths relative to install_dir.
         Subclasses can declare expected binaries for automatic path resolution.
-    man_page_files : dict[str, str]
+    man_page_files : dict[str, Path]
         Dictionary mapping man section to file path relative to install_dir.
-        Example: {"man1": "bat.1"}
     desktop_entry_config : dict[str, str] | None
         Desktop entry configuration fields.
         Returned by get_desktop_entry() if binaries exist.
     """
 
     # Declarative attributes - override in subclasses
-    binary_files: list[str] = []
-    man_page_files: dict[str, str] = {}
+    binary_files: list[Path] = []
+    man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None
 
     def __init__(self, name: str) -> None:
@@ -193,13 +192,19 @@ class Program(ABC):
         -------
         list[Path]
             List of absolute paths to executables.
+
+        Raises
+        ------
+        FileNotFoundError
+            If any declared binary file does not exist.
         """
         if self.binary_files:
             paths = []
-            for binary_name in self.binary_files:
-                binary = self.install_dir / binary_name
-                if binary.exists():
-                    paths.append(binary)
+            for binary_path in self.binary_files:
+                binary = self.install_dir / binary_path
+                if not binary.exists():
+                    raise FileNotFoundError(f"Binary not found at {binary}")
+                paths.append(binary)
             return paths
         return []
 
@@ -233,13 +238,19 @@ class Program(ABC):
         -------
         dict[str, Path]
             Mapping of man section to man page file paths.
+
+        Raises
+        ------
+        FileNotFoundError
+            If any declared man page file does not exist.
         """
         if self.man_page_files:
             pages = {}
-            for section, filename in self.man_page_files.items():
-                man_page = self.install_dir / filename
-                if man_page.exists():
-                    pages[section] = man_page
+            for section, man_path in self.man_page_files.items():
+                man_page = self.install_dir / man_path
+                if not man_page.exists():
+                    raise FileNotFoundError(f"Man page not found at {man_page}")
+                pages[section] = man_page
             return pages
         return {}
 
