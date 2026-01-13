@@ -98,10 +98,7 @@ class DrawioProgram(Program):
             Version being installed.
         """
         wrapper_script = self.install_dir / "drawio"
-        wrapper_script.write_text(
-            "#!/bin/bash\n"
-            f'exec "{self.install_dir}/drawio.AppImage" --no-sandbox "$@"\n'
-        )
+        wrapper_script.write_text(f'#!/bin/bash\nexec "{self.install_dir}/drawio.AppImage" --no-sandbox "$@"\n')
         wrapper_script.chmod(0o755)
 
     def get_desktop_entry(self) -> dict[str, str] | None:

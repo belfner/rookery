@@ -94,4 +94,3 @@ class NvimProgram(Program):
             DeletePath("nvim/share/applications"),
             DeletePath("nvim/share/icons"),
         ]
-

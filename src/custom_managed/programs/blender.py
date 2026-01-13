@@ -52,7 +52,7 @@ class BlenderProgram(Program):
             major_page = await fetcher.fetch_url_content(f"https://download.blender.org/release/{latest_major}/")
 
             # Find all blender-X.Y.Z-linux-x64.tar.xz files
-            version_pattern = r'blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz'
+            version_pattern = r"blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz"
             versions: list[str] = re.findall(version_pattern, major_page)
 
             if not versions:

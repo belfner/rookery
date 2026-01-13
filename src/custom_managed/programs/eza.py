@@ -93,8 +93,11 @@ class EzaProgram(Program):
             DownloadArchive("eza", asset_url),
             ExtractFiles("eza", {"eza": "eza"}),
             DownloadArchive("eza-man", man_page_url),
-            ExtractFiles("eza-man", {
-                f"target/man-{version}/eza.1": "target/man/eza.1",
-                f"target/man-{version}/eza_colors.5": "target/man/eza_colors.5",
-            }),
+            ExtractFiles(
+                "eza-man",
+                {
+                    f"target/man-{version}/eza.1": "target/man/eza.1",
+                    f"target/man-{version}/eza_colors.5": "target/man/eza_colors.5",
+                },
+            ),
         ]

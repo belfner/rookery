@@ -98,8 +98,11 @@ class GpingProgram(Program):
 
         return [
             DownloadArchive("gping", asset_url),
-            ExtractFiles("gping", {
-                "gping": "gping",
-                "gping.1": "gping.1",
-            }),
+            ExtractFiles(
+                "gping",
+                {
+                    "gping": "gping",
+                    "gping.1": "gping.1",
+                },
+            ),
         ]

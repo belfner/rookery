@@ -88,9 +88,12 @@ class DyskProgram(Program):
 
         return [
             DownloadArchive("dysk", asset_url),
-            ExtractFiles("dysk", {
-                "build/x86_64-unknown-linux-gnu/dysk": "dysk",
-                "build/man/dysk.1": "dysk.1",
-                "build/completion/*": "completion/",
-            }),
+            ExtractFiles(
+                "dysk",
+                {
+                    "build/x86_64-unknown-linux-gnu/dysk": "dysk",
+                    "build/man/dysk.1": "dysk.1",
+                    "build/completion/*": "completion/",
+                },
+            ),
         ]

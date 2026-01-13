@@ -343,10 +343,7 @@ def update_command(
 
         # Check if any programs need updating
         async def check_updates() -> list[Program]:
-            metadata_list = await asyncio.gather(
-                *[p.get_metadata() for p in installed],
-                return_exceptions=True
-            )
+            metadata_list = await asyncio.gather(*[p.get_metadata() for p in installed], return_exceptions=True)
             to_update: list[Program] = []
             for prog, meta in zip(installed, metadata_list, strict=True):
                 if isinstance(meta, BaseException):
@@ -373,7 +370,9 @@ def update_command(
         asyncio.run(update_programs(programs_to_update, force=force, sudo_mgr=sudo_mgr))
 
 
-async def update_program(program: Program, force: bool = False, sudo_mgr: SudoManager | None = None) -> tuple[bool, bool]:
+async def update_program(
+    program: Program, force: bool = False, sudo_mgr: SudoManager | None = None
+) -> tuple[bool, bool]:
     """
     Update a single program.
 
@@ -430,6 +429,7 @@ async def update_programs(programs: list[Program], force: bool = False, sudo_mgr
     """
     # Get metadata and filter for updates
     with console.status("[bold blue]Checking for updates..."):
+
         async def get_all_metadata() -> list[ProgramMetadata | BaseException]:
             return await asyncio.gather(*[p.get_metadata() for p in programs], return_exceptions=True)
 
@@ -525,7 +525,7 @@ def uninstall_command(
             linker_check = SystemLinker()
             for prog in programs_to_check:
                 existing = linker_check.get_existing_links(prog)
-                if (len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0):
+                if len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0:
                     needs_sudo = True
                     break
 

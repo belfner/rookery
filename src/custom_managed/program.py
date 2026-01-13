@@ -114,7 +114,7 @@ class Program(ABC):
         """
         pass
 
-    async def create_generated_files(self, version: str) -> None: # noqa: B027
+    async def create_generated_files(self, version: str) -> None:  # noqa: B027
         """
         Create any generated files after operations complete.
 
