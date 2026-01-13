@@ -47,10 +47,9 @@ def compare_versions(v1: str, v2: str) -> int:
         # Fallback to string comparison if regex doesn't match
         if v1 < v2:
             return -1
-        elif v1 > v2:
+        if v1 > v2:
             return 1
-        else:
-            return 0
+        return 0
 
     v1_num, v1_suffix = v1_match.groups()
     v2_num, v2_suffix = v2_match.groups()
@@ -65,23 +64,22 @@ def compare_versions(v1: str, v2: str) -> int:
     v2_parts.extend([0] * (max_len - len(v2_parts)))
 
     # Compare each numeric component
-    for p1, p2 in zip(v1_parts, v2_parts):
+    for p1, p2 in zip(v1_parts, v2_parts, strict=True):
         if p1 < p2:
             return -1
-        elif p1 > p2:
+        if p1 > p2:
             return 1
 
     # Numeric parts are equal, compare suffixes
     # No suffix is considered less than any suffix (stable < beta)
     if not v1_suffix and not v2_suffix:
         return 0
-    elif not v1_suffix:
+    if not v1_suffix:
         return -1  # v1 (no suffix/stable) < v2 (with suffix/beta)
-    elif not v2_suffix:
+    if not v2_suffix:
         return 1  # v1 (with suffix/beta) > v2 (no suffix/stable)
-    elif v1_suffix < v2_suffix:
+    if v1_suffix < v2_suffix:
         return -1
-    elif v1_suffix > v2_suffix:
+    if v1_suffix > v2_suffix:
         return 1
-    else:
-        return 0
+    return 0

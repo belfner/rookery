@@ -5,15 +5,14 @@ from __future__ import annotations
 import importlib
 import inspect
 from pathlib import Path
-from typing import Type
 
 from custom_managed.program import Program
 
 # Module-level cache
-_registry_cache: dict[str, Type[Program]] | None = None
+_registry_cache: dict[str, type[Program]] | None = None
 
 
-def discover_programs() -> dict[str, Type[Program]]:
+def discover_programs() -> dict[str, type[Program]]:
     """
     Auto-discover program classes from programs/ directory.
 
@@ -29,7 +28,7 @@ def discover_programs() -> dict[str, Type[Program]]:
     if _registry_cache is not None:
         return _registry_cache
 
-    registry: dict[str, Type[Program]] = {}
+    registry: dict[str, type[Program]] = {}
     programs_dir = Path(__file__).parent / "programs"
 
     if not programs_dir.exists():
@@ -44,7 +43,7 @@ def discover_programs() -> dict[str, Type[Program]]:
             module = importlib.import_module(module_name)
 
             # Find Program subclasses in module
-            for name, obj in inspect.getmembers(module, inspect.isclass):
+            for _name, obj in inspect.getmembers(module, inspect.isclass):
                 if issubclass(obj, Program) and obj is not Program:
                     # Instantiate to get name attribute
                     try:

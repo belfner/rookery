@@ -42,8 +42,7 @@ class GpingProgram(Program):
             if version.startswith("gping-"):
                 version = version[6:]  # Remove "gping-"
             # Now remove "v" prefix if present
-            version = version.lstrip("v")
-            return version
+            return version.lstrip("v")
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """

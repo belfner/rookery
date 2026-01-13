@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Annotated
 
 import typer
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
 from custom_managed.program import Program, ProgramMetadata
@@ -62,7 +62,7 @@ def list_command() -> None:
     table.add_column("Latest", style="yellow")
     table.add_column("Status", style="magenta")
 
-    for prog, meta in zip(programs, metadata_list):
+    for prog, meta in zip(programs, metadata_list, strict=True):
         if isinstance(meta, BaseException):
             # Error fetching metadata
             current = prog.read_version_file()
@@ -348,7 +348,7 @@ def update_command(
                 return_exceptions=True
             )
             to_update: list[Program] = []
-            for prog, meta in zip(installed, metadata_list):
+            for prog, meta in zip(installed, metadata_list, strict=True):
                 if isinstance(meta, BaseException):
                     continue
                 if force or meta.update_available:
@@ -436,7 +436,7 @@ async def update_programs(programs: list[Program], force: bool = False, sudo_mgr
         metadata_list = await get_all_metadata()
 
     to_update = []
-    for prog, meta in zip(programs, metadata_list):
+    for prog, meta in zip(programs, metadata_list, strict=True):
         if isinstance(meta, BaseException):
             console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
             continue
@@ -514,10 +514,8 @@ def uninstall_command(
         # Check if any programs have existing links
         programs_to_check = []
         if program is not None:
-            try:
+            with suppress(KeyError):
                 programs_to_check = [get_program(program)]
-            except KeyError:
-                pass  # Will error later in the normal flow
         else:
             programs_to_check = [p for p in list_programs() if p.version_file.exists()]
 
@@ -715,23 +713,22 @@ def compute_link_status(program: Program, results: dict[str, bool]) -> tuple[str
         # All expected links were created
         details = "created " + ", ".join(created_items)
         return ("fully_setup", details)
-    else:
-        # Some expected links were created, others already existed
-        details = "created " + ", ".join(created_items)
+    # Some expected links were created, others already existed
+    details = "created " + ", ".join(created_items)
 
-        # Add what already existed
-        existing_items = []
-        if has_binaries and not created_symlinks:
-            existing_items.append("symlinks already existed")
-        if has_desktop and not created_desktop:
-            existing_items.append("desktop entry already existed")
-        if has_man_pages and not created_man:
-            existing_items.append("man pages already existed")
+    # Add what already existed
+    existing_items = []
+    if has_binaries and not created_symlinks:
+        existing_items.append("symlinks already existed")
+    if has_desktop and not created_desktop:
+        existing_items.append("desktop entry already existed")
+    if has_man_pages and not created_man:
+        existing_items.append("man pages already existed")
 
-        if existing_items:
-            details += ", " + ", ".join(existing_items)
+    if existing_items:
+        details += ", " + ", ".join(existing_items)
 
-        return ("partially_setup", details)
+    return ("partially_setup", details)
 
 
 def compute_link_removal_status(
@@ -796,23 +793,22 @@ def compute_link_removal_status(
         # All expected links were removed
         details = "removed " + ", ".join(removed_items)
         return ("fully_removed", details)
-    else:
-        # Some expected links were removed, others didn't exist
-        details = "removed " + ", ".join(removed_items)
+    # Some expected links were removed, others didn't exist
+    details = "removed " + ", ".join(removed_items)
 
-        # Add what wasn't found
-        not_found_items = []
-        if has_binaries and not removed_symlinks:
-            not_found_items.append("no symlinks found")
-        if has_desktop and not removed_desktop:
-            not_found_items.append("no desktop entry found")
-        if has_man_pages and not removed_man:
-            not_found_items.append("no man pages found")
+    # Add what wasn't found
+    not_found_items = []
+    if has_binaries and not removed_symlinks:
+        not_found_items.append("no symlinks found")
+    if has_desktop and not removed_desktop:
+        not_found_items.append("no desktop entry found")
+    if has_man_pages and not removed_man:
+        not_found_items.append("no man pages found")
 
-        if not_found_items:
-            details += ", " + ", ".join(not_found_items)
+    if not_found_items:
+        details += ", " + ", ".join(not_found_items)
 
-        return ("partially_removed", details)
+    return ("partially_removed", details)
 
 
 @app.command(name="setup-links")
@@ -977,9 +973,7 @@ def remove_links_command(
                 console.print(f"  • {program}: [green]Fully removed[/] ({details})")
             elif status == "partially_removed":
                 console.print(f"  • {program}: [yellow]Partially removed[/] ({details})")
-            elif status == "not_linked":
-                console.print(f"  • {program}: [dim]{details}[/]")
-            elif status == "no_links":
+            elif status == "not_linked" or status == "no_links":
                 console.print(f"  • {program}: [dim]{details}[/]")
 
             # Update only the databases that changed

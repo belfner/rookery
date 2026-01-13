@@ -105,7 +105,7 @@ class StorageExplorerProgram(Program):
         executable = self.install_dir / self.binary_files[0]
         if not executable.exists():
             raise FileNotFoundError(f"StorageExplorer binary not found at {executable}")
-        
+
         icon_path = self.install_dir / "StorageExplorer" / "resources" / "app" / "out" / "app" / "icon.png"
         if not icon_path.exists():
             raise FileNotFoundError(f"StorageExplorer icon not found at {icon_path}")

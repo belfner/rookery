@@ -114,7 +114,7 @@ class Program(ABC):
         """
         pass
 
-    async def create_generated_files(self, version: str) -> None:
+    async def create_generated_files(self, version: str) -> None: # noqa: B027
         """
         Create any generated files after operations complete.
 
@@ -230,10 +230,8 @@ class Program(ABC):
         dict[str, str] | None
             Desktop entry fields, or None if CLI-only.
         """
-        if self.desktop_entry_config:
-            # Only return desktop entry if program has binaries
-            if len(self.get_binary_paths()) > 0:
-                return self.desktop_entry_config
+        if self.desktop_entry_config and len(self.get_binary_paths()) > 0:
+            return self.desktop_entry_config
         return None
 
     def get_man_pages(self) -> dict[str, Path]:
