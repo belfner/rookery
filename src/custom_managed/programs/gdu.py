@@ -15,6 +15,7 @@ class GduProgram(Program):
 
     # Declarative file locations
     binary_files = [Path("gdu")]
+    man_page_files = {"man1": Path("gdu.1")}
 
     def __init__(self) -> None:
         """Initialize gdu program."""
@@ -82,8 +83,12 @@ class GduProgram(Program):
             self._select_asset,
         )
 
+        man_page_url = f"https://github.com/{self.github_repo}/releases/download/v{version}/gdu.1.tgz"
+
         return [
             DownloadArchive("gdu", asset_url),
             ExtractFiles("gdu", {"gdu_linux_amd64": "gdu"}),
             MakeExecutable("gdu"),
+            DownloadArchive("gdu-man", man_page_url),
+            ExtractFiles("gdu-man", {"gdu.1": "gdu.1"}),
         ]

@@ -15,6 +15,10 @@ class EzaProgram(Program):
 
     # Declarative file locations
     binary_files = [Path("eza")]
+    man_page_files = {
+        "man1": Path("target/man/eza.1"),
+        "man5": Path("target/man/eza_colors.5"),
+    }
 
     def __init__(self) -> None:
         """Initialize eza program."""
@@ -82,7 +86,14 @@ class EzaProgram(Program):
             self._select_asset,
         )
 
+        man_page_url = f"https://github.com/{self.github_repo}/releases/download/v{version}/man-{version}.tar.gz"
+
         return [
             DownloadArchive("eza", asset_url),
             ExtractFiles("eza", {"eza": "eza"}),
+            DownloadArchive("eza-man", man_page_url),
+            ExtractFiles("eza-man", {
+                f"target/man-{version}/eza.1": "target/man/eza.1",
+                f"target/man-{version}/eza_colors.5": "target/man/eza_colors.5",
+            }),
         ]
