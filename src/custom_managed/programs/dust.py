@@ -14,12 +14,13 @@ class DustProgram(Program):
     """dust - A more intuitive version of du written in Rust."""
 
     # Declarative file locations
+    program_name = "dust"
     binary_files = [Path("dust")]
     man_page_files = {"man1": Path("dust.1")}
 
     def __init__(self) -> None:
         """Initialize dust program."""
-        super().__init__(name="dust")
+        super().__init__()
         self.github_repo = "bootandy/dust"
 
     async def get_latest_version(self) -> str:

@@ -14,11 +14,12 @@ class NetronProgram(Program):
     """Netron - Visualizer for neural network, deep learning, and machine learning models."""
 
     # Declarative file locations
+    program_name = "netron"
     binary_files = [Path("netron")]
 
     def __init__(self) -> None:
         """Initialize Netron program."""
-        super().__init__(name="netron")
+        super().__init__()
         self.github_repo = "lutzroeder/netron"
 
     async def get_latest_version(self) -> str:

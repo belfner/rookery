@@ -14,11 +14,12 @@ class StorageExplorerProgram(Program):
     """Azure Storage Explorer - Manage Azure Storage resources from desktop."""
 
     # Declarative file locations
+    program_name = "storageexplorer"
     binary_files = [Path("StorageExplorer/StorageExplorer")]
 
     def __init__(self) -> None:
         """Initialize Azure Storage Explorer program."""
-        super().__init__(name="storageexplorer")
+        super().__init__()
         self.github_repo = "microsoft/AzureStorageExplorer"
 
     async def get_latest_version(self) -> str:

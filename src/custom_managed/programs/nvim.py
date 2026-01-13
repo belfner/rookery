@@ -14,12 +14,13 @@ class NvimProgram(Program):
     """Neovim - Hyperextensible Vim-based text editor."""
 
     # Declarative file locations
+    program_name = "nvim"
     binary_files = [Path("nvim/bin/nvim")]
     man_page_files = {"man1": Path("nvim/share/man/man1/nvim.1")}
 
     def __init__(self) -> None:
         """Initialize Neovim program."""
-        super().__init__(name="nvim")
+        super().__init__()
         self.github_repo = "neovim/neovim"
 
     async def get_latest_version(self) -> str:

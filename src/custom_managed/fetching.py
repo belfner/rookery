@@ -135,9 +135,9 @@ class GitHubFetcher:
         response = await self.client.head(url, follow_redirects=False)
 
         if response.status_code in (301, 302, 303, 307, 308):
-            location = response.headers.get("location", "")
+            location: str = response.headers.get("location", "")
             if "/tag/" in location:
-                tag = location.split("/tag/")[-1]
+                tag: str = location.split("/tag/")[-1]
                 return tag.lstrip("v")
 
         # If redirect doesn't work, fall back to API

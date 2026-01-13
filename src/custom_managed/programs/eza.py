@@ -14,6 +14,7 @@ class EzaProgram(Program):
     """eza - A modern, maintained replacement for ls."""
 
     # Declarative file locations
+    program_name = "eza"
     binary_files = [Path("eza")]
     man_page_files = {
         "man1": Path("target/man/eza.1"),
@@ -22,7 +23,7 @@ class EzaProgram(Program):
 
     def __init__(self) -> None:
         """Initialize eza program."""
-        super().__init__(name="eza")
+        super().__init__()
         self.github_repo = "eza-community/eza"
 
     async def get_latest_version(self) -> str:

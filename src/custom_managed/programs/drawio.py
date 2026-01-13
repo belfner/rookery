@@ -14,11 +14,12 @@ class DrawioProgram(Program):
     """draw.io - Professional diagramming application."""
 
     # Declarative file locations
+    program_name = "drawio"
     binary_files = [Path("drawio")]
 
     def __init__(self) -> None:
         """Initialize draw.io program."""
-        super().__init__(name="drawio")
+        super().__init__()
         self.github_repo = "jgraph/drawio-desktop"
 
     async def get_latest_version(self) -> str:

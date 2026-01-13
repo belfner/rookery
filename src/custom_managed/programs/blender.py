@@ -14,11 +14,12 @@ class BlenderProgram(Program):
     """Blender - Free and open source 3D creation suite."""
 
     # Declarative file locations
+    program_name = "blender"
     binary_files = [Path("blender/blender")]
 
     def __init__(self) -> None:
         """Initialize Blender program."""
-        super().__init__(name="blender")
+        super().__init__()
 
     async def get_latest_version(self) -> str:
         """
@@ -52,7 +53,7 @@ class BlenderProgram(Program):
 
             # Find all blender-X.Y.Z-linux-x64.tar.xz files
             version_pattern = r'blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz'
-            versions = re.findall(version_pattern, major_page)
+            versions: list[str] = re.findall(version_pattern, major_page)
 
             if not versions:
                 raise RuntimeError(f"Could not find Blender versions in {latest_major}")

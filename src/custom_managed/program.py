@@ -29,6 +29,9 @@ class Program(ABC):
 
     Declarative Attributes
     ----------------------
+    program_name : str
+        Program name (directory name).
+        Must be overridden by subclasses.
     binary_files : list[Path]
         List of binary file paths relative to install_dir.
         Subclasses can declare expected binaries for automatic path resolution.
@@ -40,21 +43,27 @@ class Program(ABC):
     """
 
     # Declarative attributes - override in subclasses
+    program_name: str = ""
     binary_files: list[Path] = []
     man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None
 
-    def __init__(self, name: str) -> None:
+    def __init__(self) -> None:
         """
         Initialize program instance.
 
-        Parameters
-        ----------
-        name : str
-            Program name (directory name).
+        Uses the program_name class attribute to set up paths.
+
+        Raises
+        ------
+        ValueError
+            If program_name class attribute is not set.
         """
-        self.name = name
-        self.install_dir = Path(f"/opt/custom-managed-new/tools/{name}")
+        if not self.program_name:
+            raise ValueError(f"{self.__class__.__name__} must define program_name class attribute")
+
+        self.name = self.program_name
+        self.install_dir = Path(f"/opt/custom-managed-new/tools/{self.name}")
         self.version_file = self.install_dir / ".version"
 
     @abstractmethod

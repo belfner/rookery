@@ -14,12 +14,13 @@ class BatProgram(Program):
     """bat - A cat clone with syntax highlighting and Git integration."""
 
     # Declarative file locations
+    program_name = "bat"
     binary_files = [Path("bat")]
     man_page_files = {"man1": Path("bat.1")}
 
     def __init__(self) -> None:
         """Initialize bat program."""
-        super().__init__(name="bat")
+        super().__init__()
         self.github_repo = "sharkdp/bat"
 
     async def get_latest_version(self) -> str:

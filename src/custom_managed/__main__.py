@@ -10,7 +10,7 @@ from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 from rich.table import Table
 
-from custom_managed.program import Program
+from custom_managed.program import Program, ProgramMetadata
 from custom_managed.registry import get_program, list_programs
 from custom_managed.sudo import SudoManager
 from custom_managed.system import SystemLinker
@@ -48,7 +48,7 @@ def list_command() -> None:
         console.print("[yellow]No programs found in registry[/]")
         return
 
-    async def get_all_metadata():
+    async def get_all_metadata() -> list[ProgramMetadata | BaseException]:
         tasks = [prog.get_metadata() for prog in programs]
         return await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -63,7 +63,7 @@ def list_command() -> None:
     table.add_column("Status", style="magenta")
 
     for prog, meta in zip(programs, metadata_list):
-        if isinstance(meta, Exception):
+        if isinstance(meta, BaseException):
             # Error fetching metadata
             current = prog.read_version_file()
             error_msg = str(meta)[:30]  # Truncate long error messages
@@ -306,7 +306,7 @@ def update_command(
                 raise typer.Exit(1)
 
             # Check if update is needed
-            async def check_and_update():
+            async def check_and_update() -> bool:
                 meta = await prog.get_metadata()
                 if not force and not meta.update_available:
                     console.print(f"[dim]{prog.name} is already up to date ({meta.current_version})[/]")
@@ -342,14 +342,14 @@ def update_command(
             return
 
         # Check if any programs need updating
-        async def check_updates():
+        async def check_updates() -> list[Program]:
             metadata_list = await asyncio.gather(
                 *[p.get_metadata() for p in installed],
                 return_exceptions=True
             )
-            to_update = []
+            to_update: list[Program] = []
             for prog, meta in zip(installed, metadata_list):
-                if isinstance(meta, Exception):
+                if isinstance(meta, BaseException):
                     continue
                 if force or meta.update_available:
                     to_update.append(prog)
@@ -430,14 +430,14 @@ async def update_programs(programs: list[Program], force: bool = False, sudo_mgr
     """
     # Get metadata and filter for updates
     with console.status("[bold blue]Checking for updates..."):
-        async def get_all_metadata():
+        async def get_all_metadata() -> list[ProgramMetadata | BaseException]:
             return await asyncio.gather(*[p.get_metadata() for p in programs], return_exceptions=True)
 
         metadata_list = await get_all_metadata()
 
     to_update = []
     for prog, meta in zip(programs, metadata_list):
-        if isinstance(meta, Exception):
+        if isinstance(meta, BaseException):
             console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
             continue
         if meta.update_available or force:

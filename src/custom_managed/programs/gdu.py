@@ -14,12 +14,13 @@ class GduProgram(Program):
     """gdu - Fast disk usage analyzer with console interface."""
 
     # Declarative file locations
+    program_name = "gdu"
     binary_files = [Path("gdu")]
     man_page_files = {"man1": Path("gdu.1")}
 
     def __init__(self) -> None:
         """Initialize gdu program."""
-        super().__init__(name="gdu")
+        super().__init__()
         self.github_repo = "dundee/gdu"
 
     async def get_latest_version(self) -> str:

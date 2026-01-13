@@ -58,7 +58,7 @@ class SudoManager:
             finally:
                 self._sudo_active = False
 
-    def run_as_root(self, command: list[str]) -> subprocess.CompletedProcess:
+    def run_as_root(self, command: list[str]) -> subprocess.CompletedProcess[bytes]:
         """
         Run command with sudo using cached credentials.
 

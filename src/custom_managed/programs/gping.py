@@ -15,12 +15,13 @@ class GpingProgram(Program):
     """gping - Ping, but with a graph."""
 
     # Declarative file locations
+    program_name = "gping"
     binary_files = [Path("gping")]
     man_page_files = {"man1": Path("gping.1")}
 
     def __init__(self) -> None:
         """Initialize gping program."""
-        super().__init__(name="gping")
+        super().__init__()
         self.github_repo = "orf/gping"
 
     async def get_latest_version(self) -> str:
