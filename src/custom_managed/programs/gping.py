@@ -8,27 +8,23 @@ from custom_managed.fetching import (
     Asset,
     GitHubFetcher,
 )
+from custom_managed.github_program import GitHubProgram
 from custom_managed.github_utils import get_github_asset_url
 from custom_managed.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
 )
-from custom_managed.program import Program
 
 
-class GpingProgram(Program):
+class GpingProgram(GitHubProgram):
     """gping - Ping, but with a graph."""
 
     # Declarative file locations
     program_name = "gping"
+    github_repo = "orf/gping"
     binary_files = [Path("gping")]
     man_page_files = {"man1": Path("gping.1")}
-
-    def __init__(self) -> None:
-        """Initialize gping program."""
-        super().__init__()
-        self.github_repo = "orf/gping"
 
     async def get_latest_version(self) -> str:
         """
@@ -68,17 +64,6 @@ class GpingProgram(Program):
             if "Linux-gnu-x86_64" in asset.name and asset.name.endswith(".tar.gz"):
                 return asset
         return None
-
-    async def initialize(self, version: str) -> None:
-        """
-        Initialize installation directory.
-
-        Parameters
-        ----------
-        version : str
-            Version being installed.
-        """
-        self.install_dir.mkdir(parents=True, exist_ok=True)
 
     async def get_install_operations(self, version: str) -> list[InstallOperation]:
         """
