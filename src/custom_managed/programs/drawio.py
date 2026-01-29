@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from custom_managed.config import config
 from custom_managed.fetching import Asset
 from custom_managed.github_utils import (
     get_github_asset_url,
@@ -117,10 +118,12 @@ class DrawioProgram(Program):
         dict[str, str]
             Desktop entry fields for draw.io.
         """
+        exec_path = config.bin_dir / "drawio"
+
         return {
             "Name": "draw.io",
             "Comment": "Professional diagramming application",
-            "Exec": "/usr/local/bin/drawio %U",
+            "Exec": f"{exec_path} %U",
             "Terminal": "false",
             "Type": "Application",
             "Icon": "drawio",

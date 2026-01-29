@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import shutil
+import sys
 from contextlib import suppress
 from typing import Annotated
 
@@ -10,6 +13,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from custom_managed.config import (
+    PathSource,
+    config,
+)
 from custom_managed.program import (
     Program,
     ProgramMetadata,
@@ -1057,6 +1064,78 @@ def remove_links_command(
             console.print(f"  • {partially_removed_count} program(s) partially removed")
         if not_linked_count > 0:
             console.print(f"  • {not_linked_count} program(s) not linked")
+
+
+@app.command(name="info")
+def info_command() -> None:
+    """
+    Display configuration and system information.
+
+    Shows all configured paths, their sources (environment variable or default),
+    tool version, Python version, and installation statistics.
+    """
+    from custom_managed import __version__
+
+    console.print("\n[bold cyan]Custom-Managed Configuration[/bold cyan]\n")
+
+    # Tool and system info
+    console.print("[bold]Tool Information:[/bold]")
+    console.print(f"  Version: {__version__}")
+    console.print(f"  Python: {sys.version.split()[0]}")
+    console.print()
+
+    # Configuration paths
+    console.print("[bold]Configuration Paths:[/bold]")
+
+    paths_info = [
+        ("Install Directory", config.install_dir, "CUSTOM_MANAGED_INSTALL_DIR"),
+        ("Binary Directory", config.bin_dir, "CUSTOM_MANAGED_BIN_DIR"),
+        ("Desktop Directory", config.desktop_dir, "CUSTOM_MANAGED_DESKTOP_DIR"),
+        ("Man Pages Directory", config.man_dir, "CUSTOM_MANAGED_MAN_DIR"),
+        ("Temp Directory", config.temp_dir, "CUSTOM_MANAGED_TEMP_DIR"),
+    ]
+
+    for label, path, env_var in paths_info:
+        source_type, _ = config.get_path_source(path)
+        source_display = f"[yellow]{env_var}[/yellow]" if source_type == PathSource.ENV else "[dim]default[/dim]"
+        console.print(f"  {label}: {path}")
+        console.print(f"    Source: {source_display}")
+
+    console.print()
+
+    # Installation statistics
+    console.print("[bold]Installation Statistics:[/bold]")
+
+    # Count installed programs
+    if config.install_dir.exists():
+        installed_programs = [d for d in config.install_dir.iterdir() if d.is_dir() and (d / ".version").exists()]
+        console.print(f"  Installed Programs: {len(installed_programs)}")
+
+        # Disk usage
+        if shutil.which("du"):
+            import subprocess
+
+            try:
+                result = subprocess.run(
+                    ["du", "-sh", str(config.install_dir)],
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                disk_usage = result.stdout.split()[0]
+                console.print(f"  Disk Usage: {disk_usage}")
+            except subprocess.CalledProcessError:
+                console.print("  Disk Usage: [dim]unavailable[/dim]")
+
+        # Show if install directory is writable
+        writable = config.install_dir.exists() and os.access(config.install_dir, os.W_OK)
+        writable_status = "[green]Yes[/green]" if writable else "[red]No (requires sudo)[/red]"
+        console.print(f"  Install Directory Writable: {writable_status}")
+    else:
+        console.print("  Installed Programs: 0")
+        console.print(f"  [yellow]Install directory does not exist yet: {config.install_dir}[/yellow]")
+
+    console.print()
 
 
 if __name__ == "__main__":

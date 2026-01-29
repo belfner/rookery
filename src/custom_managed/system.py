@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from custom_managed.config import config
 from custom_managed.program import Program
 from custom_managed.sudo import SudoManager
 
@@ -19,9 +20,9 @@ class SystemLinker:
 
     def __init__(
         self,
-        bin_dir: Path = Path("/usr/local/bin"),
-        desktop_dir: Path = Path("/usr/share/applications"),
-        man_dir: Path = Path("/usr/share/man"),
+        bin_dir: Path | None = None,
+        desktop_dir: Path | None = None,
+        man_dir: Path | None = None,
         sudo_manager: SudoManager | None = None,
     ) -> None:
         """
@@ -29,18 +30,18 @@ class SystemLinker:
 
         Parameters
         ----------
-        bin_dir : Path
-            System binary directory. Defaults to /usr/local/bin.
-        desktop_dir : Path
-            Desktop entries directory. Defaults to /usr/share/applications.
-        man_dir : Path
-            System man pages directory. Defaults to /usr/share/man.
+        bin_dir : Path, optional
+            System binary directory. Defaults to value from CUSTOM_MANAGED_BIN_DIR or /usr/local/bin.
+        desktop_dir : Path, optional
+            Desktop entries directory. Defaults to value from CUSTOM_MANAGED_DESKTOP_DIR or /usr/share/applications.
+        man_dir : Path, optional
+            System man pages directory. Defaults to value from CUSTOM_MANAGED_MAN_DIR or /usr/share/man.
         sudo_manager : SudoManager | None
             Sudo manager for privilege elevation. If None, operates without sudo.
         """
-        self.bin_dir = bin_dir
-        self.desktop_dir = desktop_dir
-        self.man_dir = man_dir
+        self.bin_dir = bin_dir if bin_dir is not None else config.bin_dir
+        self.desktop_dir = desktop_dir if desktop_dir is not None else config.desktop_dir
+        self.man_dir = man_dir if man_dir is not None else config.man_dir
         self.sudo_manager = sudo_manager
 
     def create_binary_symlink(self, target: Path, name: str | None = None) -> None:

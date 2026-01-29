@@ -1,3 +1,12 @@
 """Custom package manager for third-party development tools."""
 
-__version__ = "0.1.0"
+from importlib.metadata import (
+    PackageNotFoundError,
+    version,
+)
+
+
+try:
+    __version__ = version("custom-managed")
+except PackageNotFoundError:
+    __version__ = "0.0.0.dev"

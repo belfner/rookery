@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from custom_managed.config import config
 from custom_managed.fetching import DirectFetcher
 from custom_managed.operations import (
     DownloadArchive,
@@ -116,10 +117,12 @@ class BlenderProgram(Program):
         if not icon_path.exists():
             raise FileNotFoundError(f"blender icon not found at {icon_path}")
 
+        exec_path = config.bin_dir / "blender"
+
         return {
             "Name": "Blender",
             "Comment": "3D modeling, animation, rendering and post-production",
-            "Exec": "/usr/local/bin/blender %f",
+            "Exec": f"{exec_path} %f",
             "Terminal": "false",
             "Type": "Application",
             "Icon": "blender",

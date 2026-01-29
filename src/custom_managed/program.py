@@ -10,6 +10,7 @@ from abc import (
 from dataclasses import dataclass
 from pathlib import Path
 
+from custom_managed.config import config
 from custom_managed.operations import (
     InstallContext,
     InstallOperation,
@@ -69,8 +70,46 @@ class Program(ABC):
             raise ValueError(f"{self.__class__.__name__} must define program_name class attribute")
 
         self.name = self.program_name
-        self.install_dir = Path(f"/opt/custom-managed-new/tools/{self.name}")
+        self.install_dir = config.install_dir / self.name
         self.version_file = self.install_dir / ".version"
+
+    def _ensure_install_dir(self) -> None:
+        """
+        Ensure install directory exists with proper ownership.
+
+        Creates the base install directory with sudo if needed, then sets
+        ownership to current user.
+        """
+        import getpass
+        import grp
+        import os
+
+        from custom_managed.sudo import SudoManager
+
+        base_install_dir = config.install_dir
+
+        # If base directory doesn't exist and we don't have write access to parent
+        if not base_install_dir.exists():
+            parent_dir = base_install_dir.parent
+            if not os.access(parent_dir, os.W_OK):
+                # Need sudo to create base directory
+                sudo_mgr = SudoManager()
+                if not sudo_mgr.validate_and_cache():
+                    raise RuntimeError("Failed to obtain sudo credentials")
+
+                # Create with sudo
+                sudo_mgr.run_as_root(["mkdir", "-p", str(base_install_dir)])
+
+                # Set ownership to current user
+                current_user = getpass.getuser()
+                current_group = grp.getgrgid(os.getgid()).gr_name
+                sudo_mgr.run_as_root(["chown", f"{current_user}:{current_group}", str(base_install_dir)])
+            else:
+                # Can create without sudo
+                base_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create program-specific directory (should not need sudo after base exists)
+        self.install_dir.mkdir(parents=True, exist_ok=True)
 
     @abstractmethod
     async def get_latest_version(self) -> str:
@@ -154,6 +193,9 @@ class Program(ABC):
         from custom_managed.installer import Installer
 
         try:
+            # Ensure install directory exists with proper ownership
+            self._ensure_install_dir()
+
             # Phase 1: Initialize
             await self.initialize(version)
 

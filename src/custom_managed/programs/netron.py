@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from custom_managed.config import config
 from custom_managed.fetching import Asset
 from custom_managed.github_utils import (
     get_github_asset_url,
@@ -118,10 +119,12 @@ class NetronProgram(Program):
             Desktop entry fields for Netron.
         """
         icon_path = self.install_dir / "icon.png"
+        exec_path = config.bin_dir / "netron"
+
         return {
             "Name": "Netron",
             "Comment": "Neural network model viewer",
-            "Exec": "/usr/local/bin/netron %U",
+            "Exec": f"{exec_path} %U",
             "Terminal": "false",
             "Type": "Application",
             "Icon": str(icon_path) if icon_path.exists() else "netron",

@@ -9,6 +9,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from custom_managed.config import config
+
 
 class Installer:
     """
@@ -17,15 +19,17 @@ class Installer:
     Manages temporary downloads, archive extraction, and removal of old versions.
     """
 
-    def __init__(self, download_dir: Path = Path("/tmp/custom-managed")) -> None:
+    def __init__(self, download_dir: Path | None = None) -> None:
         """
         Initialize installer.
 
         Parameters
         ----------
-        download_dir : Path
-            Temporary directory for downloads. Defaults to /tmp/custom-managed.
+        download_dir : Path, optional
+            Directory for temporary downloads. Defaults to value from CUSTOM_MANAGED_TEMP_DIR or /tmp/custom-managed.
         """
+        if download_dir is None:
+            download_dir = config.temp_dir
         self.download_dir = download_dir
         self.download_dir.mkdir(parents=True, exist_ok=True)
 
