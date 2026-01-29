@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from rich.progress import Progress, TaskID
+from rich.progress import (
+    Progress,
+    TaskID,
+)
 
 
 @dataclass

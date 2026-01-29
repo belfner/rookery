@@ -10,10 +10,17 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from custom_managed.program import Program, ProgramMetadata
-from custom_managed.registry import get_program, list_programs
+from custom_managed.program import (
+    Program,
+    ProgramMetadata,
+)
+from custom_managed.registry import (
+    get_program,
+    list_programs,
+)
 from custom_managed.sudo import SudoManager
 from custom_managed.system import SystemLinker
+
 
 app = typer.Typer(
     name="custom-managed",

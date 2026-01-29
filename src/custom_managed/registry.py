@@ -8,6 +8,7 @@ from pathlib import Path
 
 from custom_managed.program import Program
 
+
 # Module-level cache
 _registry_cache: dict[str, type[Program]] | None = None
 

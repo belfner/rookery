@@ -5,8 +5,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from custom_managed.fetching import Asset
-from custom_managed.github_utils import get_github_asset_url, get_github_latest_version
-from custom_managed.operations import DownloadArchive, ExtractFiles, InstallOperation
+from custom_managed.github_utils import (
+    get_github_asset_url,
+    get_github_latest_version,
+)
+from custom_managed.operations import (
+    DownloadArchive,
+    ExtractFiles,
+    InstallOperation,
+)
 from custom_managed.program import Program
 
 

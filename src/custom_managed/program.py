@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import shutil
-from abc import ABC, abstractmethod
+from abc import (
+    ABC,
+    abstractmethod,
+)
 from dataclasses import dataclass
 from pathlib import Path
 
-from custom_managed.operations import InstallContext, InstallOperation
+from custom_managed.operations import (
+    InstallContext,
+    InstallOperation,
+)
 
 
 @dataclass

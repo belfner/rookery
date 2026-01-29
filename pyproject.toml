@@ -1,6 +1,6 @@
 [project]
 name = "custom-managed"
-version = "0.2.0"
+version = "0.2.1"
 description = "Custom package manager for third-party development tools"
 readme = "README.md"
 authors = [

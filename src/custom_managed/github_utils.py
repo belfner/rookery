@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from custom_managed.fetching import Asset, GitHubFetcher
+from custom_managed.fetching import (
+    Asset,
+    GitHubFetcher,
+)
 
 
 async def get_github_latest_version(github_repo: str) -> str:

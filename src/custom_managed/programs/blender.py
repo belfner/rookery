@@ -6,7 +6,11 @@ import re
 from pathlib import Path
 
 from custom_managed.fetching import DirectFetcher
-from custom_managed.operations import DownloadArchive, ExtractArchive, InstallOperation
+from custom_managed.operations import (
+    DownloadArchive,
+    ExtractArchive,
+    InstallOperation,
+)
 from custom_managed.program import Program
 
 
