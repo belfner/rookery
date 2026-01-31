@@ -60,70 +60,44 @@ ForceFlag = Annotated[
     typer.Option("--force", "-f", help="Force reinstall even if already up to date"),
 ]
 
+YesFlag = Annotated[
+    bool,
+    typer.Option("--yes", "-y", help="Skip confirmation prompt"),
+]
+
 
 @app.command(name="list")
 def list_command() -> None:
     """
-    List all programs with versions and update status.
+    List installed programs with current versions and link status.
 
-    Displays a table with program name, current version, latest version,
-    and update availability. Performs parallel async checks for all programs.
+    Displays a table with program name, current version, installation status,
+    and link status. Only shows programs that are currently installed.
     """
     programs = list_programs()
+    installed = [p for p in programs if p.version_file.exists()]
 
-    if len(programs) == 0:
-        console.print("[yellow]No programs found in registry[/]")
+    if len(installed) == 0:
+        console.print("[yellow]No programs installed[/]")
         return
 
-    async def get_all_metadata() -> list[ProgramMetadata | BaseException]:
-        tasks = [prog.get_metadata() for prog in programs]
-        return await asyncio.gather(*tasks, return_exceptions=True)
-
-    with console.status("[bold blue]Checking for updates..."):
-        metadata_list = asyncio.run(get_all_metadata())
-
     # Create Rich table
-    table = Table(title="Managed Programs")
+    table = Table(title="Installed Programs")
     table.add_column("Program", style="cyan", no_wrap=True)
     table.add_column("Current", style="green")
-    table.add_column("Latest", style="yellow")
     table.add_column("Status", style="magenta")
     table.add_column("Links", style="blue")
 
-    for prog, meta in zip(programs, metadata_list, strict=True):
-        # Compute link status for this program
+    for prog in installed:
+        current = prog.read_version_file()
         link_display, link_style = compute_link_status_for_list(prog)
 
-        if isinstance(meta, BaseException):
-            # Error fetching metadata
-            current = prog.read_version_file()
-            error_msg = str(meta)[:30]  # Truncate long error messages
-            table.add_row(
-                prog.name,
-                current if current != "0.0.0" else "[dim]Not installed[/]",
-                f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
-                "[red]Check failed[/]",
-                f"[{link_style}]{link_display}[/]",
-            )
-        else:
-            current = meta.current_version
-            latest = meta.latest_version or "Unknown"
-
-            if meta.update_available:
-                if current == "0.0.0":
-                    status = "[bold red]Available to install[/]"
-                    current_display = "[dim]Not installed[/]"
-                else:
-                    status = "[bold red]Update available[/]"
-                    current_display = current
-            elif current == "0.0.0":
-                status = "[dim]Not installed[/]"
-                current_display = "[dim]Not installed[/]"
-            else:
-                status = "[dim]Up to date[/]"
-                current_display = current
-
-            table.add_row(prog.name, current_display, latest, status, f"[{link_style}]{link_display}[/]")
+        table.add_row(
+            prog.name,
+            current,
+            "Installed",
+            f"[{link_style}]{link_display}[/]",
+        )
 
     console.print(table)
 
@@ -181,6 +155,7 @@ def install_command(
 def update_command(
     program: Annotated[str | None, typer.Argument(help="Program name to update (optional)")] = None,
     force: ForceFlag = False,
+    yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
 ) -> None:
     """
@@ -188,6 +163,7 @@ def update_command(
 
     Without arguments, updates all installed programs with available updates.
     Use --force to reinstall even if up to date.
+    Use --yes/-y to skip confirmation prompt.
     Use --no-links to skip creating system links (no sudo needed).
     """
     if program is not None:
@@ -234,7 +210,7 @@ def update_command(
             return
 
         # Check if any programs need updating
-        async def check_updates() -> list[Program]:
+        async def check_updates() -> tuple[list[Program], list[ProgramMetadata | BaseException]]:
             metadata_list = await asyncio.gather(*[p.get_metadata() for p in installed], return_exceptions=True)
             to_update: list[Program] = []
             for prog, meta in zip(installed, metadata_list, strict=True):
@@ -242,13 +218,45 @@ def update_command(
                     continue
                 if force or meta.update_available:
                     to_update.append(prog)
-            return to_update
+            return to_update, metadata_list
 
-        programs_to_update = asyncio.run(check_updates())
+        programs_to_update, metadata_list = asyncio.run(check_updates())
 
         if len(programs_to_update) == 0:
             console.print("[green]All programs are up to date[/]")
             return
+
+        # Display preview table
+        preview_table = Table(title="Available Updates")
+        preview_table.add_column("Program", style="cyan", no_wrap=True)
+        preview_table.add_column("Current", style="green")
+        preview_table.add_column("Latest", style="yellow")
+
+        for prog, meta in zip(installed, metadata_list, strict=True):
+            if prog not in programs_to_update:
+                continue
+
+            if isinstance(meta, BaseException):
+                error_msg = str(meta)[:30]
+                preview_table.add_row(
+                    prog.name,
+                    prog.read_version_file(),
+                    f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
+                )
+            else:
+                preview_table.add_row(
+                    prog.name,
+                    meta.current_version,
+                    meta.latest_version or "Unknown",
+                )
+
+        console.print(preview_table)
+        console.print()
+
+        # Confirmation prompt (unless --yes flag)
+        if not yes and not typer.confirm("Continue with updates?", default=True):
+            console.print("Cancelled")
+            raise typer.Exit(0)
 
         # Setup sudo if linking enabled
         sudo_mgr = (

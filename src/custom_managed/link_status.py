@@ -237,7 +237,7 @@ def compute_link_status_for_list(program: Program) -> tuple[str, str]:
 
         # Determine status based on link presence
         if actual_count == 0:
-            return ("✗ Missing", "red")
+            return ("− Unlinked", "dim")
         if actual_count == expected_count:
             return ("✓ Linked", "green")
         return ("⚠ Partial", "yellow")
