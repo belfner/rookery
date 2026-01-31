@@ -21,6 +21,7 @@ from custom_managed.config import (
 from custom_managed.link_status import (
     compute_link_removal_status,
     compute_link_status,
+    compute_link_status_for_list,
 )
 from custom_managed.program import (
     Program,
@@ -87,8 +88,12 @@ def list_command() -> None:
     table.add_column("Current", style="green")
     table.add_column("Latest", style="yellow")
     table.add_column("Status", style="magenta")
+    table.add_column("Links", style="blue")
 
     for prog, meta in zip(programs, metadata_list, strict=True):
+        # Compute link status for this program
+        link_display, link_style = compute_link_status_for_list(prog)
+
         if isinstance(meta, BaseException):
             # Error fetching metadata
             current = prog.read_version_file()
@@ -98,6 +103,7 @@ def list_command() -> None:
                 current if current != "0.0.0" else "[dim]Not installed[/]",
                 f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
                 "[red]Check failed[/]",
+                f"[{link_style}]{link_display}[/]",
             )
         else:
             current = meta.current_version
@@ -117,7 +123,7 @@ def list_command() -> None:
                 status = "[dim]Up to date[/]"
                 current_display = current
 
-            table.add_row(prog.name, current_display, latest, status)
+            table.add_row(prog.name, current_display, latest, status, f"[{link_style}]{link_display}[/]")
 
     console.print(table)
 
