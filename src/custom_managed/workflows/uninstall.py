@@ -3,12 +3,58 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
 
 from rich.console import Console
 
 from custom_managed.program import Program
 from custom_managed.sudo import SudoManager
 from custom_managed.system import SystemLinker
+
+
+def uninstall_deb_program(program: Program, console: Console) -> None:
+    """
+    Uninstall .deb-based program.
+
+    Removes package using apt, prompts for autoremove, and cleans up metadata.
+
+    Parameters
+    ----------
+    program : Program
+        Program to uninstall.
+    console : Console
+        Rich console for output.
+
+    Raises
+    ------
+    RuntimeError
+        If package metadata not found or apt remove fails.
+    """
+    package_metadata = program.install_dir / ".package_name"
+    if not package_metadata.exists():
+        raise RuntimeError(f"Package metadata not found for {program.name}")
+
+    package_name = package_metadata.read_text().strip()
+
+    console.print(f"Removing {package_name}...")
+    try:
+        subprocess.run(
+            ["sudo", "apt", "remove", "-y", package_name],
+            check=True,
+        )
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to remove {package_name}: apt returned {e.returncode}") from e
+
+    console.print("\n[yellow]Package removed. Would you like to remove unused dependencies?[/]")
+    response = input("Run 'sudo apt autoremove'? (y/n): ")
+    if response.lower() == "y":
+        subprocess.run(["sudo", "apt", "autoremove", "-y"], check=True)
+        console.print("[green]✓ Removed unused dependencies[/]")
+
+    if program.install_dir.exists():
+        shutil.rmtree(program.install_dir)
+
+    console.print(f"[green]✓ Uninstalled {program.name}[/]")
 
 
 def uninstall_program(
@@ -30,6 +76,12 @@ def uninstall_program(
     """
     if not program.install_dir.exists():
         console.print(f"[yellow]{program.name} is not installed[/]")
+        return
+
+    from custom_managed.deb_program import DebProgram
+
+    if isinstance(program, DebProgram):
+        uninstall_deb_program(program, console)
         return
 
     # Remove system links first
@@ -70,6 +122,8 @@ def uninstall_programs(
     sudo_mgr : SudoManager | None
         Sudo manager for link removal. If None, skip link removal.
     """
+    from custom_managed.deb_program import DebProgram
+
     linker = SystemLinker(sudo_manager=sudo_mgr) if sudo_mgr else None
     uninstalled_count = 0
     links_removed_count = 0
@@ -78,6 +132,11 @@ def uninstall_programs(
 
     for prog in programs:
         if prog.install_dir.exists():
+            if isinstance(prog, DebProgram):
+                uninstall_deb_program(prog, console)
+                uninstalled_count += 1
+                continue
+
             # Remove links first
             if linker:
                 results = linker.remove_program_links(prog)

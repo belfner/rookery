@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import fnmatch
+import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
 import zipfile
@@ -216,3 +218,120 @@ class Installer:
                 removed.append(item)
 
         return removed
+
+    def get_deb_dependencies(self, deb_path: Path, main_package_name: str) -> list[dict[str, str]]:
+        """
+        Get list of additional dependencies that would be installed with .deb package.
+
+        Uses apt-get simulation to determine what packages would be installed.
+        Filters out the main package itself and returns only additional dependencies.
+
+        Parameters
+        ----------
+        deb_path : Path
+            Path to .deb file.
+        main_package_name : str
+            Name of the main package being installed (will be filtered out).
+
+        Returns
+        -------
+        list[dict[str, str]]
+            List of additional dependency packages with 'name', 'version', 'status' keys.
+            Status is one of: 'new', 'already-installed'.
+            The main package itself is not included in this list.
+
+        Raises
+        ------
+        FileNotFoundError
+            If deb_path does not exist.
+        RuntimeError
+            If apt command fails.
+        """
+        if not deb_path.exists():
+            raise FileNotFoundError(f".deb file not found: {deb_path}")
+
+        try:
+            result = subprocess.run(
+                ["apt-get", "install", "-s", str(deb_path)],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to check dependencies: {e.stderr}") from e
+
+        packages = []
+
+        for line in result.stdout.splitlines():
+            if "NEW packages" in line:
+                continue
+            if "will be upgraded" in line:
+                continue
+
+            if line.startswith("  ") and not line.startswith("   "):
+                pkg_names = line.strip().split()
+                for pkg_name in pkg_names:
+                    if pkg_name == main_package_name:
+                        continue
+
+                    version_result = subprocess.run(
+                        ["apt-cache", "policy", pkg_name],
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    version_match = re.search(r"Candidate:\s+(\S+)", version_result.stdout)
+                    version = version_match.group(1) if version_match else "unknown"
+
+                    installed_match = re.search(r"Installed:\s+(\S+)", version_result.stdout)
+                    is_installed = installed_match and installed_match.group(1) != "(none)"
+
+                    packages.append(
+                        {
+                            "name": pkg_name,
+                            "version": version,
+                            "status": "already-installed" if is_installed else "new",
+                        }
+                    )
+
+        return packages
+
+    def install_deb_systemwide(
+        self,
+        deb_path: Path,
+        package_name: str,
+    ) -> None:
+        """
+        Install .deb package system-wide using apt.
+
+        Requires sudo privileges. Uses apt install to handle dependencies
+        automatically.
+
+        Parameters
+        ----------
+        deb_path : Path
+            Path to .deb file.
+        package_name : str
+            Name of package being installed (for error messages).
+
+        Raises
+        ------
+        FileNotFoundError
+            If deb_path does not exist.
+        RuntimeError
+            If apt install fails or sudo not available.
+        """
+        if not deb_path.exists():
+            raise FileNotFoundError(f".deb file not found: {deb_path}")
+
+        if shutil.which("sudo") is None:
+            raise RuntimeError("sudo command not found - required for system installation")
+
+        try:
+            subprocess.run(
+                ["sudo", "apt", "install", "-y", str(deb_path)],
+                check=True,
+                capture_output=False,
+            )
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"Failed to install {package_name}: apt install returned {e.returncode}") from e

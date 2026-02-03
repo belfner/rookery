@@ -128,7 +128,7 @@ def install_command(
             prog = get_program(program)
 
             # Check if already installed
-            if prog.install_dir.exists():
+            if prog.version_file.exists():
                 console.print(f"[yellow]{program} is already installed[/]")
                 console.print(f"[yellow]Use 'custom-managed update {program}' to update it[/]")
                 raise typer.Exit(1)
@@ -384,11 +384,15 @@ def setup_links_command(
             # Update only the databases that changed
             if results["desktop"] or results["man"]:
                 console.print()
+                updated_any = False
                 if results["desktop"]:
                     linker.update_desktop_database()
+                    updated_any = True
                 if results["man"]:
                     linker.update_man_database()
-                console.print("[green]Updated system databases[/]")
+                    updated_any = True
+                if updated_any:
+                    console.print("[green]Updated system databases[/]")
 
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
@@ -439,11 +443,15 @@ def setup_links_command(
         # Update only the databases that changed
         if desktop_changed or man_changed:
             console.print()
+            updated_any = False
             if desktop_changed:
                 linker.update_desktop_database()
+                updated_any = True
             if man_changed:
                 linker.update_man_database()
-            console.print("[green]Updated system databases[/]")
+                updated_any = True
+            if updated_any:
+                console.print("[green]Updated system databases[/]")
 
         # Print summary
         console.print()
@@ -500,11 +508,15 @@ def remove_links_command(
             # Update only the databases that changed
             if results["desktop"] or results["man"]:
                 console.print()
+                updated_any = False
                 if results["desktop"]:
                     linker.update_desktop_database()
+                    updated_any = True
                 if results["man"]:
                     linker.update_man_database()
-                console.print("[green]Updated system databases[/]")
+                    updated_any = True
+                if updated_any:
+                    console.print("[green]Updated system databases[/]")
 
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
@@ -556,11 +568,15 @@ def remove_links_command(
         # Update only the databases that changed
         if desktop_changed or man_changed:
             console.print()
+            updated_any = False
             if desktop_changed:
                 linker.update_desktop_database()
+                updated_any = True
             if man_changed:
                 linker.update_man_database()
-            console.print("[green]Updated system databases[/]")
+                updated_any = True
+            if updated_any:
+                console.print("[green]Updated system databases[/]")
 
         # Print summary
         console.print()

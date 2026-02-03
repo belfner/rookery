@@ -2,30 +2,26 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
-from custom_managed.appimage_program import AppImageProgram
-from custom_managed.config import config
+from custom_managed.deb_program import DebProgram
 from custom_managed.fetching import Asset
 from custom_managed.github_utils import get_github_asset_url
 from custom_managed.operations import (
-    DownloadFile,
+    DownloadArchive,
+    InstallDebSystemWide,
     InstallOperation,
-    MakeExecutable,
 )
 
 
-class NetronProgram(AppImageProgram):
+class NetronProgram(DebProgram):
     """Netron - Visualizer for neural network, deep learning, and machine learning models."""
 
-    # Declarative file locations
     program_name = "netron"
     github_repo = "lutzroeder/netron"
-    binary_files = [Path("netron")]
+    deb_package_name = "netron"
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select x86_64 AppImage.
+        Select amd64 .deb package.
 
         Parameters
         ----------
@@ -35,10 +31,10 @@ class NetronProgram(AppImageProgram):
         Returns
         -------
         Asset | None
-            Selected asset matching Netron-*-x86_64.AppImage pattern.
+            Selected asset matching Netron-*-amd64.deb pattern.
         """
         for asset in assets:
-            if "Netron" in asset.name and "x86_64" in asset.name and asset.name.endswith(".AppImage"):
+            if "Netron" in asset.name and "amd64" in asset.name and asset.name.endswith(".deb"):
                 return asset
         return None
 
@@ -63,29 +59,9 @@ class NetronProgram(AppImageProgram):
         )
 
         return [
-            DownloadFile(asset_url, "netron.AppImage"),
-            MakeExecutable("netron.AppImage"),
+            DownloadArchive("netron-deb", asset_url),
+            InstallDebSystemWide(
+                archive_id="netron-deb",
+                package_name=self.deb_package_name,
+            ),
         ]
-
-    def get_desktop_entry(self) -> dict[str, str] | None:
-        """
-        Get desktop entry configuration.
-
-        Returns
-        -------
-        dict[str, str]
-            Desktop entry fields for Netron.
-        """
-        icon_path = self.install_dir / "icon.png"
-        exec_path = config.bin_dir / "netron"
-
-        return {
-            "Name": "Netron",
-            "Comment": "Neural network model viewer",
-            "Exec": f"{exec_path} %U",
-            "Terminal": "false",
-            "Type": "Application",
-            "Icon": str(icon_path) if icon_path.exists() else "netron",
-            "Categories": "Development;Science;",
-            "MimeType": "application/octet-stream;",
-        }

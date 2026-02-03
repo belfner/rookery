@@ -301,3 +301,67 @@ class DeletePath(InstallOperation):
                 shutil.rmtree(path)
             elif path.is_file():
                 path.unlink()
+
+
+class InstallDebSystemWide(InstallOperation):
+    """Install .deb package system-wide using apt."""
+
+    def __init__(
+        self,
+        archive_id: str,
+        package_name: str,
+        auto_accept: bool = False,
+    ) -> None:
+        """
+        Initialize system-wide .deb installation operation.
+
+        Parameters
+        ----------
+        archive_id : str
+            ID of previously downloaded .deb file.
+        package_name : str
+            Name of package being installed.
+        auto_accept : bool
+            If True, skip dependency confirmation prompt.
+        """
+        self.archive_id = archive_id
+        self.package_name = package_name
+        self.auto_accept = auto_accept
+
+    async def execute(self, context: InstallContext) -> None:
+        """
+        Install .deb package system-wide.
+
+        Shows dependency information and prompts for confirmation
+        unless auto_accept is True. Only shows prompt if there are
+        additional dependencies beyond the main package.
+
+        Parameters
+        ----------
+        context : InstallContext
+            Installation context.
+
+        Raises
+        ------
+        RuntimeError
+            If apt install fails or user declines installation.
+        """
+        archive_path = context.downloads[self.archive_id]
+
+        dependencies = context.installer.get_deb_dependencies(archive_path, self.package_name)
+
+        new_deps = [d for d in dependencies if d["status"] == "new"]
+
+        if new_deps and not self.auto_accept:
+            print(f"\nInstalling {self.package_name} will also install the following dependencies:")
+            for dep in new_deps:
+                print(f"  {dep['name']} ({dep['version']})")
+
+            response = input("\nContinue with installation? (y/n): ")
+            if response.lower() != "y":
+                raise RuntimeError("Installation cancelled by user")
+
+        context.installer.install_deb_systemwide(
+            deb_path=archive_path,
+            package_name=self.package_name,
+        )

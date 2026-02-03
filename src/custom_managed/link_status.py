@@ -2,8 +2,31 @@
 
 from __future__ import annotations
 
+from enum import (
+    Enum,
+    auto,
+)
+
 from custom_managed.program import Program
-from custom_managed.system import SystemLinker
+
+
+class LinkStatus(Enum):
+    """Link status for programs in list display."""
+
+    LINKED = auto()
+    PARTIAL = auto()
+    UNLINKED = auto()
+    NOT_INSTALLED = auto()
+    ERROR = auto()
+
+
+LINK_STATUS_DISPLAY: dict[LinkStatus, tuple[str, str]] = {
+    LinkStatus.LINKED: ("✓ Linked", "green"),
+    LinkStatus.PARTIAL: ("⚠ Partial", "yellow"),
+    LinkStatus.UNLINKED: ("− Unlinked", "dim"),
+    LinkStatus.NOT_INSTALLED: ("—", "dim"),
+    LinkStatus.ERROR: ("? Error", "red"),
+}
 
 
 def compute_link_status(program: Program, results: dict[str, bool]) -> tuple[str, str]:
@@ -169,6 +192,9 @@ def compute_link_status_for_list(program: Program) -> tuple[str, str]:
     """
     Compute link status for display in list command.
 
+    Delegates to the program's get_link_status() method and converts
+    the enum to display format.
+
     Parameters
     ----------
     program : Program
@@ -178,70 +204,8 @@ def compute_link_status_for_list(program: Program) -> tuple[str, str]:
     -------
     tuple[str, str]
         (display_text, style) where:
-        - display_text: "✓ Linked" | "⚠ Partial" | "✗ Missing" | "—" | "? Error"
+        - display_text: "✓ Linked" | "⚠ Partial" | "− Unlinked" | "—" | "? Error"
         - style: "green" | "yellow" | "red" | "dim"
     """
-    try:
-        # Check if program is installed
-        if not program.version_file.exists():
-            return ("—", "dim")
-
-        # Determine what link types are expected for this program
-        try:
-            has_binaries = len(program.get_binary_paths()) > 0
-        except FileNotFoundError:
-            # Incomplete installation
-            return ("—", "dim")
-
-        try:
-            has_desktop = program.get_desktop_entry() is not None
-        except FileNotFoundError:
-            has_desktop = False
-
-        try:
-            has_man_pages = len(program.get_man_pages()) > 0
-        except FileNotFoundError:
-            has_man_pages = False
-
-        # If program has no links to create
-        if not has_binaries and not has_desktop and not has_man_pages:
-            return ("—", "dim")
-
-        # Check what links currently exist
-        linker = SystemLinker()
-        existing = linker.get_existing_links(program)
-
-        # Count expected vs actual links
-        expected_count = 0
-        actual_count = 0
-
-        if has_binaries:
-            try:
-                binary_count = len(program.get_binary_paths())
-                expected_count += binary_count
-                actual_count += len(existing["symlinks"])
-            except FileNotFoundError:
-                pass
-
-        if has_desktop:
-            expected_count += 1
-            actual_count += len(existing["desktop"])
-
-        if has_man_pages:
-            try:
-                man_count = len(program.get_man_pages())
-                expected_count += man_count
-                actual_count += len(existing["man"])
-            except FileNotFoundError:
-                pass
-
-        # Determine status based on link presence
-        if actual_count == 0:
-            return ("− Unlinked", "dim")
-        if actual_count == expected_count:
-            return ("✓ Linked", "green")
-        return ("⚠ Partial", "yellow")
-
-    except Exception:
-        # Catch all exceptions to prevent list command from breaking
-        return ("? Error", "red")
+    status = program.get_link_status()
+    return LINK_STATUS_DISPLAY[status]

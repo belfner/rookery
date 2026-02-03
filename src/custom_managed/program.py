@@ -9,12 +9,17 @@ from abc import (
 )
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from custom_managed.config import config
 from custom_managed.operations import (
     InstallContext,
     InstallOperation,
 )
+
+
+if TYPE_CHECKING:
+    from custom_managed.link_status import LinkStatus
 
 
 @dataclass
@@ -308,6 +313,78 @@ class Program(ABC):
                 pages[section] = man_page
             return pages
         return {}
+
+    def get_link_status(self) -> LinkStatus:
+        """
+        Get link status for this program.
+
+        Default implementation for archive-based programs that use SystemLinker
+        to create symlinks, desktop entries, and man page links.
+
+        Returns
+        -------
+        LinkStatus
+            Current link status enum value.
+        """
+        from custom_managed.link_status import LinkStatus
+        from custom_managed.system import SystemLinker
+
+        try:
+            if not self.version_file.exists():
+                return LinkStatus.NOT_INSTALLED
+
+            try:
+                has_binaries = len(self.get_binary_paths()) > 0
+            except FileNotFoundError:
+                return LinkStatus.NOT_INSTALLED
+
+            try:
+                has_desktop = self.get_desktop_entry() is not None
+            except FileNotFoundError:
+                has_desktop = False
+
+            try:
+                has_man_pages = len(self.get_man_pages()) > 0
+            except FileNotFoundError:
+                has_man_pages = False
+
+            if not has_binaries and not has_desktop and not has_man_pages:
+                return LinkStatus.NOT_INSTALLED
+
+            linker = SystemLinker()
+            existing = linker.get_existing_links(self)
+
+            expected_count = 0
+            actual_count = 0
+
+            if has_binaries:
+                try:
+                    binary_count = len(self.get_binary_paths())
+                    expected_count += binary_count
+                    actual_count += len(existing["symlinks"])
+                except FileNotFoundError:
+                    pass
+
+            if has_desktop:
+                expected_count += 1
+                actual_count += len(existing["desktop"])
+
+            if has_man_pages:
+                try:
+                    man_count = len(self.get_man_pages())
+                    expected_count += man_count
+                    actual_count += len(existing["man"])
+                except FileNotFoundError:
+                    pass
+
+            if actual_count == 0:
+                return LinkStatus.UNLINKED
+            if actual_count == expected_count:
+                return LinkStatus.LINKED
+            return LinkStatus.PARTIAL
+
+        except Exception:
+            return LinkStatus.ERROR
 
     def read_version_file(self) -> str:
         """Read version from .version file."""
