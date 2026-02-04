@@ -331,7 +331,9 @@ class Installer:
             subprocess.run(
                 ["sudo", "apt", "install", "-y", str(deb_path)],
                 check=True,
-                capture_output=False,
+                capture_output=True,
             )
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"Failed to install {package_name}: apt install returned {e.returncode}") from e
+            output = e.stdout.decode() if e.stdout else ""
+            output += e.stderr.decode() if e.stderr else ""
+            raise RuntimeError(f"Failed to install {package_name}: {output}") from e
