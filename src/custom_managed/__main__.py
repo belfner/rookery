@@ -338,8 +338,8 @@ def uninstall_command(
         uninstall_programs(installed, console, sudo_mgr=sudo_mgr)
 
 
-@app.command(name="setup-links")
-def setup_links_command(
+@app.command(name="link")
+def link_command(
     program: Annotated[str | None, typer.Argument(help="Program name (optional)")] = None,
     all_flag: AllFlag = False,
 ) -> None:
@@ -353,8 +353,8 @@ def setup_links_command(
     # Validate arguments
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: custom-managed setup-links nvim[/]")
-        console.print("[yellow]Or: custom-managed setup-links --all[/]")
+        console.print("[yellow]Example: custom-managed link nvim[/]")
+        console.print("[yellow]Or: custom-managed link --all[/]")
         raise typer.Exit(1)
 
     # Validate sudo
@@ -464,8 +464,8 @@ def setup_links_command(
             console.print(f"  • {already_linked_count} program(s) already linked")
 
 
-@app.command(name="remove-links")
-def remove_links_command(
+@app.command(name="unlink")
+def unlink_command(
     program: Annotated[str | None, typer.Argument(help="Program name (optional)")] = None,
     all_flag: AllFlag = False,
 ) -> None:
@@ -479,8 +479,8 @@ def remove_links_command(
     # Validate arguments
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: custom-managed remove-links nvim[/]")
-        console.print("[yellow]Or: custom-managed remove-links --all[/]")
+        console.print("[yellow]Example: custom-managed unlink nvim[/]")
+        console.print("[yellow]Or: custom-managed unlink --all[/]")
         raise typer.Exit(1)
 
     # Validate sudo
