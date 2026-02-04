@@ -50,6 +50,44 @@ class Release:
     assets: list[Asset]
 
 
+class GitHubRateLimitError(Exception):
+    """
+    Exception raised when GitHub API rate limit is exceeded.
+
+    Provides clear, actionable guidance based on authentication status.
+    """
+
+    def __init__(self, repo: str, authenticated: bool) -> None:
+        """
+        Initialize rate limit error.
+
+        Parameters
+        ----------
+        repo : str
+            Repository that triggered the rate limit.
+        authenticated : bool
+            Whether request was authenticated with a token.
+        """
+        self.repo = repo
+        self.authenticated = authenticated
+
+        if authenticated:
+            message = (
+                f"GitHub API rate limit exceeded for {repo}.\n"
+                "Even with authentication, you've exceeded the rate limit (5,000 requests/hour).\n"
+                "Wait until your limit resets and try again."
+            )
+        else:
+            message = (
+                f"GitHub API rate limit exceeded for {repo}.\n"
+                "Unauthenticated requests are limited to 60 per hour.\n"
+                "To increase your limit to 5,000 requests/hour, set GITHUB_TOKEN or GH_TOKEN environment variable.\n"
+                "Create a token at: https://github.com/settings/tokens (no scopes needed for public repos)"
+            )
+
+        super().__init__(message)
+
+
 async def download_file(
     url: str,
     dest: Path,
@@ -103,9 +141,22 @@ class GitHubFetcher:
     """
 
     def __init__(self) -> None:
-        """Initialize GitHub fetcher with HTTP client."""
+        """Initialize GitHub fetcher with HTTP client and optional authentication."""
+        import os
+
+        # Check GITHUB_TOKEN first (standard), then GH_TOKEN (gh CLI compatibility)
+        token = os.environ.get("GITHUB_TOKEN")
+        if token is None:
+            token = os.environ.get("GH_TOKEN")
+
+        self._token = token
+
+        headers = {"Accept": "application/vnd.github+json"}
+        if self._token is not None:
+            headers["Authorization"] = f"Bearer {self._token}"
+
         self.client = httpx.AsyncClient(
-            headers={"Accept": "application/vnd.github+json"},
+            headers=headers,
             timeout=30.0,
             follow_redirects=True,
         )
@@ -186,9 +237,20 @@ class GitHubFetcher:
         ------
         httpx.HTTPError
             If request fails.
+        GitHubRateLimitError
+            If GitHub API rate limit is exceeded.
         """
         url = f"https://api.github.com/repos/{repo}/releases/latest"
         response = await self.client.get(url)
+
+        # Check for rate limiting before raising generic HTTP errors
+        if response.status_code == 403:
+            # GitHub returns 403 for rate limit exceeded
+            # Check if it's actually a rate limit error vs other 403 (like DMCA takedown)
+            error_message = response.text.lower()
+            if "rate limit" in error_message or "api rate limit exceeded" in error_message:
+                raise GitHubRateLimitError(repo, authenticated=self._token is not None)
+
         response.raise_for_status()
         data = response.json()
 

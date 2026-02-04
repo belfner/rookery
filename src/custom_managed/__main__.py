@@ -605,6 +605,19 @@ def info_command() -> None:
     console.print("[bold]Tool Information:[/bold]")
     console.print(f"  Version: {__version__}")
     console.print(f"  Python: {sys.version.split()[0]}")
+
+    # GitHub Configuration
+    github_token = os.environ.get("GITHUB_TOKEN")
+    gh_token = os.environ.get("GH_TOKEN")
+
+    if github_token is not None:
+        token_status = "[green]Configured (GITHUB_TOKEN)[/green]"
+    elif gh_token is not None:
+        token_status = "[green]Configured (GH_TOKEN)[/green]"
+    else:
+        token_status = "[yellow]Not set (60 requests/hour)[/yellow]"
+
+    console.print(f"  GitHub Token: {token_status}")
     console.print()
 
     # Configuration paths
