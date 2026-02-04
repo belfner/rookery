@@ -5,6 +5,13 @@ from __future__ import annotations
 import asyncio
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
 from custom_managed.program import (
     Program,
@@ -109,12 +116,25 @@ async def update_programs(
     upgraded: list[str] = []
     failed: list[str] = []
 
-    for prog in to_update:
-        success, attempted = await update_program(prog, console, force=force, sudo_mgr=sudo_mgr)
-        if success:
-            upgraded.append(prog.name)
-        elif attempted:
-            failed.append(prog.name)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[cyan]{task.fields[current]}[/]"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Updating", total=len(to_update), current="")
+
+        for i, prog in enumerate(to_update, 1):
+            progress.update(task, current=f"[{i}/{len(to_update)}] {prog.name}")
+            success, attempted = await update_program(prog, console, force=force, sudo_mgr=sudo_mgr)
+            if success:
+                upgraded.append(prog.name)
+            elif attempted:
+                failed.append(prog.name)
+            progress.advance(task)
 
     # Update databases if any programs were updated
     if sudo_mgr is not None and len(upgraded) > 0:

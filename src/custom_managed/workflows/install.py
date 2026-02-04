@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+)
 
 from custom_managed.program import Program
 from custom_managed.sudo import SudoManager
@@ -110,12 +117,25 @@ async def install_programs(
     installed: list[str] = []
     failed: list[str] = []
 
-    for prog in programs:
-        success, attempted = await install_program(prog, console, sudo_mgr=sudo_mgr)
-        if success:
-            installed.append(prog.name)
-        elif attempted:
-            failed.append(prog.name)
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[cyan]{task.fields[current]}[/]"),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Installing", total=len(programs), current="")
+
+        for i, prog in enumerate(programs, 1):
+            progress.update(task, current=f"[{i}/{len(programs)}] {prog.name}")
+            success, attempted = await install_program(prog, console, sudo_mgr=sudo_mgr)
+            if success:
+                installed.append(prog.name)
+            elif attempted:
+                failed.append(prog.name)
+            progress.advance(task)
 
     # Update databases if any programs were installed
     if sudo_mgr is not None and len(installed) > 0:
