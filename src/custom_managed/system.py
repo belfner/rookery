@@ -138,9 +138,12 @@ class SystemLinker:
         target : Path
             Target man page file path.
         section : str
-            Man section (e.g., "man1", "man8").
+            Man section (e.g., "man1", "man8"). May include compound key
+            (e.g., "man1:script.1") for multiple pages in same section.
         """
-        section_dir = self.man_dir / section
+        # Extract actual section from compound key if present
+        actual_section = section.split(":")[0] if ":" in section else section
+        section_dir = self.man_dir / actual_section
         link_path = section_dir / target.name
 
         if self.sudo_manager is not None:
@@ -170,14 +173,17 @@ class SystemLinker:
         name : str
             Man page filename.
         section : str
-            Man section (e.g., "man1", "man8").
+            Man section (e.g., "man1", "man8"). May include compound key
+            (e.g., "man1:script.1") for multiple pages in same section.
 
         Returns
         -------
         bool
             True if symlink was removed, False if it didn't exist.
         """
-        link_path = self.man_dir / section / name
+        # Extract actual section from compound key if present
+        actual_section = section.split(":")[0] if ":" in section else section
+        link_path = self.man_dir / actual_section / name
 
         if not link_path.is_symlink():
             return False
@@ -304,7 +310,9 @@ class SystemLinker:
         try:
             man_pages = program.get_man_pages()
             for section, man_page in man_pages.items():
-                link_path = self.man_dir / section / man_page.name
+                # Extract actual section from compound key if present
+                actual_section = section.split(":")[0] if ":" in section else section
+                link_path = self.man_dir / actual_section / man_page.name
                 if link_path.is_symlink() or link_path.exists():
                     existing["man"].append(link_path)
         except FileNotFoundError:
@@ -361,7 +369,9 @@ class SystemLinker:
         for section, man_page in man_pages.items():
             if not man_page.exists():
                 continue
-            link_path = self.man_dir / section / man_page.name
+            # Extract actual section from compound key if present
+            actual_section = section.split(":")[0] if ":" in section else section
+            link_path = self.man_dir / actual_section / man_page.name
             # Link doesn't exist or is broken
             if not link_path.exists() and not link_path.is_symlink():
                 return True
@@ -479,7 +489,9 @@ class SystemLinker:
             if not man_page.exists():
                 continue
 
-            link_path = self.man_dir / section / man_page.name
+            # Extract actual section from compound key if present
+            actual_section = section.split(":")[0] if ":" in section else section
+            link_path = self.man_dir / actual_section / man_page.name
             needs_create = False
 
             if not link_path.exists() and not link_path.is_symlink():
