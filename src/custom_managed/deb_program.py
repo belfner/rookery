@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from custom_managed.github_program import GitHubProgram
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ class DebProgram(GitHubProgram):
                 return next((a for a in assets if a.name.endswith(".deb")), None)
     """
 
+    sudo_requirement: SudoRequirement = SudoRequirement.REQUIRED  # Override GitHubProgram
     deb_package_name: str = ""
 
     def __init__(self) -> None:

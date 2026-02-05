@@ -16,6 +16,7 @@ from custom_managed.operations import (
     InstallContext,
     InstallOperation,
 )
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 if TYPE_CHECKING:
@@ -56,6 +57,7 @@ class Program(ABC):
 
     # Declarative attributes - override in subclasses
     program_name: str = ""
+    sudo_requirement: SudoRequirement  # Must be set by intermediate subclasses
     binary_files: list[Path] = []
     man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None

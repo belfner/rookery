@@ -13,6 +13,7 @@ from custom_managed.operations import (
     InstallOperation,
 )
 from custom_managed.program import Program
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 class BlenderProgram(Program):
@@ -20,6 +21,7 @@ class BlenderProgram(Program):
 
     # Declarative file locations
     program_name = "blender"
+    sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("blender/blender")]
 
     def __init__(self) -> None:

@@ -21,6 +21,7 @@ async def install_or_update_program(
     version: str,
     console: Console,
     sudo_mgr: SudoManager | None = None,
+    create_links: bool = True,
 ) -> None:
     """
     Install or update program to specified version.
@@ -36,13 +37,19 @@ async def install_or_update_program(
     console : Console
         Rich console for output.
     sudo_mgr : SudoManager | None
-        Sudo manager for link creation. If None, skip link creation.
+        Sudo manager for link creation. May be None for user-local paths.
+    create_links : bool
+        Whether to create system links. If False, skip link creation entirely.
     """
     # Install program (uses program's own install() method)
     await program.install(version)
 
-    # Create system links if sudo manager provided
-    if sudo_mgr is not None:
+    # Create system links if requested
+    # For .deb programs, SystemLinker is never used (apt handles everything)
+    # For archive programs with user-local paths, sudo_manager may be None
+    from custom_managed.deb_program import DebProgram
+
+    if create_links and not isinstance(program, DebProgram):
         linker = SystemLinker(sudo_manager=sudo_mgr)
         results = linker.setup_program(program)
 
@@ -58,6 +65,7 @@ async def install_program(
     program: Program,
     console: Console,
     sudo_mgr: SudoManager | None = None,
+    create_links: bool = True,
 ) -> tuple[bool, bool]:
     """
     Install a new program.
@@ -69,7 +77,9 @@ async def install_program(
     console : Console
         Rich console for output.
     sudo_mgr : SudoManager | None
-        Sudo manager for link creation. If None, skip link creation.
+        Sudo manager for link creation. May be None for user-local paths.
+    create_links : bool
+        Whether to create system links. If False, skip link creation entirely.
 
     Returns
     -------
@@ -84,7 +94,7 @@ async def install_program(
         console.print(f"[cyan]Installing {program.name} {latest_version}...[/]")
 
         # Use unified install function
-        await install_or_update_program(program, latest_version, console, sudo_mgr)
+        await install_or_update_program(program, latest_version, console, sudo_mgr, create_links)
 
         console.print(f"[green]✓ {program.name} installed to {latest_version}[/]")
 
@@ -99,6 +109,7 @@ async def install_programs(
     programs: list[Program],
     console: Console,
     sudo_mgr: SudoManager | None = None,
+    create_links: bool = True,
 ) -> None:
     """
     Install multiple programs.
@@ -110,7 +121,9 @@ async def install_programs(
     console : Console
         Rich console for output.
     sudo_mgr : SudoManager | None
-        Sudo manager for link creation. If None, skip link creation.
+        Sudo manager for link creation. May be None for user-local paths.
+    create_links : bool
+        Whether to create system links. If False, skip link creation entirely.
     """
     console.print(f"[cyan]Installing {len(programs)} program(s)...[/]")
 
@@ -130,7 +143,7 @@ async def install_programs(
 
         for i, prog in enumerate(programs, 1):
             progress.update(task, current=f"[{i}/{len(programs)}] {prog.name}")
-            success, attempted = await install_program(prog, console, sudo_mgr=sudo_mgr)
+            success, attempted = await install_program(prog, console, sudo_mgr=sudo_mgr, create_links=create_links)
             if success:
                 installed.append(prog.name)
             elif attempted:
@@ -138,7 +151,7 @@ async def install_programs(
             progress.advance(task)
 
     # Update databases if any programs were installed
-    if sudo_mgr is not None and len(installed) > 0:
+    if create_links and len(installed) > 0:
         linker = SystemLinker(sudo_manager=sudo_mgr)
         # Check which databases need updating
         needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in installed)

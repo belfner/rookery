@@ -13,7 +13,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from custom_managed.cli_helpers import validate_sudo_or_exit
+from custom_managed.cli_helpers import (
+    check_and_warn_path,
+    validate_sudo_if_needed,
+    validate_sudo_or_exit,
+)
 from custom_managed.config import (
     PathSource,
     config,
@@ -31,6 +35,7 @@ from custom_managed.registry import (
     get_program,
     list_programs,
 )
+from custom_managed.sudo_requirement import SudoRequirement
 from custom_managed.system import SystemLinker
 from custom_managed.workflows import (
     install_program,
@@ -119,9 +124,6 @@ def install_command(
         console.print("[yellow]Example: custom-managed install nvim[/]")
         raise typer.Exit(1)
 
-    # Setup sudo if linking enabled
-    sudo_mgr = None if no_links else validate_sudo_or_exit(console, "Run with --no-links to skip system link creation")
-
     if program is not None:
         # Install single program
         try:
@@ -133,9 +135,25 @@ def install_command(
                 console.print(f"[yellow]Use 'custom-managed update {program}' to update it[/]")
                 raise typer.Exit(1)
 
-            success, attempted = asyncio.run(install_program(prog, console, sudo_mgr=sudo_mgr))
+            # Validate sudo based on program's sudo requirement and paths
+            if no_links:
+                sudo_mgr = None
+            elif prog.sudo_requirement == SudoRequirement.REQUIRED:
+                # Program requires sudo for installation (e.g., apt install)
+                sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
+            else:
+                # Check if paths need sudo for linking
+                sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+
+            success, attempted = asyncio.run(
+                install_program(prog, console, sudo_mgr=sudo_mgr, create_links=not no_links)
+            )
             if not success and attempted:
                 raise typer.Exit(1)
+
+            # Warn if ~/.local/bin not in PATH (only for programs that don't require sudo)
+            if success and prog.sudo_requirement == SudoRequirement.NOT_REQUIRED:
+                check_and_warn_path(console)
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
@@ -148,7 +166,26 @@ def install_command(
             console.print("[green]All programs are already installed[/]")
             return
 
-        asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr))
+        # Check if any programs require sudo for installation
+        requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in uninstalled)
+
+        # Validate sudo if:
+        # 1. Linking is enabled AND paths need sudo, OR
+        # 2. Any programs require sudo for installation (e.g., .deb via apt)
+        if no_links:
+            sudo_mgr = None
+        elif requires_sudo_programs:
+            # Programs require sudo for installation (e.g., apt install)
+            sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for installation")
+        else:
+            # Only check if paths need sudo for linking
+            sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+
+        asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr, create_links=not no_links))
+
+        # Warn about PATH for programs that don't require sudo
+        if any(p.sudo_requirement == SudoRequirement.NOT_REQUIRED for p in uninstalled):
+            check_and_warn_path(console)
 
 
 @app.command(name="update")
@@ -189,14 +226,23 @@ def update_command(
             if not needs_update:
                 return
 
-            # Setup sudo if linking enabled
-            sudo_mgr = (
-                None if no_links else validate_sudo_or_exit(console, "Run with --no-links to skip system link creation")
-            )
+            # Validate sudo based on program's sudo requirement and paths
+            if no_links:
+                sudo_mgr = None
+            elif prog.sudo_requirement == SudoRequirement.REQUIRED:
+                sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
+            else:
+                sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
 
-            success, attempted = asyncio.run(update_program(prog, console, force=force, sudo_mgr=sudo_mgr))
+            success, attempted = asyncio.run(
+                update_program(prog, console, force=force, sudo_mgr=sudo_mgr, create_links=not no_links)
+            )
             if not success and attempted:
                 raise typer.Exit(1)
+
+            # Warn if ~/.local/bin not in PATH (only for programs that don't require sudo)
+            if success and prog.sudo_requirement == SudoRequirement.NOT_REQUIRED:
+                check_and_warn_path(console)
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
@@ -258,12 +304,24 @@ def update_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        # Setup sudo if linking enabled
-        sudo_mgr = (
-            None if no_links else validate_sudo_or_exit(console, "Run with --no-links to skip system link creation")
+        # Check if any programs require sudo for installation
+        requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_update)
+
+        # Validate sudo based on program requirements and paths
+        if no_links:
+            sudo_mgr = None
+        elif requires_sudo_programs:
+            sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for installation")
+        else:
+            sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+
+        asyncio.run(
+            update_programs(programs_to_update, console, force=force, sudo_mgr=sudo_mgr, create_links=not no_links)
         )
 
-        asyncio.run(update_programs(programs_to_update, console, force=force, sudo_mgr=sudo_mgr))
+        # Warn about PATH for programs that don't require sudo
+        if any(p.sudo_requirement == SudoRequirement.NOT_REQUIRED for p in programs_to_update):
+            check_and_warn_path(console)
 
 
 @app.command(name="uninstall")
@@ -307,7 +365,7 @@ def uninstall_command(
 
         # Only request sudo if links exist
         if needs_sudo:
-            sudo_mgr = validate_sudo_or_exit(console, "Run with --no-links to skip system link removal")
+            sudo_mgr = validate_sudo_if_needed(console, "Hint: Use --no-links to skip system link removal")
 
     if program is not None:
         # Uninstall single program
@@ -358,7 +416,7 @@ def link_command(
         raise typer.Exit(1)
 
     # Validate sudo
-    sudo_mgr = validate_sudo_or_exit(console)
+    sudo_mgr = validate_sudo_if_needed(console)
 
     linker = SystemLinker(sudo_manager=sudo_mgr)
 
@@ -484,7 +542,7 @@ def unlink_command(
         raise typer.Exit(1)
 
     # Validate sudo
-    sudo_mgr = validate_sudo_or_exit(console)
+    sudo_mgr = validate_sudo_if_needed(console)
 
     linker = SystemLinker(sudo_manager=sudo_mgr)
 

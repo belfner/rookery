@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from custom_managed.config import config
@@ -43,6 +44,14 @@ class SystemLinker:
         self.desktop_dir = desktop_dir if desktop_dir is not None else config.desktop_dir
         self.man_dir = man_dir if man_dir is not None else config.man_dir
         self.sudo_manager = sudo_manager
+
+        # Ensure user-local directories exist if using user-writable paths
+        if self.sudo_manager is None:
+            for dir_path in [self.bin_dir, self.desktop_dir.parent, self.man_dir]:
+                if not dir_path.exists():
+                    with suppress(PermissionError):
+                        # Will fail later when trying to create links
+                        dir_path.mkdir(parents=True, exist_ok=True)
 
     def create_binary_symlink(self, target: Path, name: str | None = None) -> None:
         """
@@ -115,19 +124,16 @@ class SystemLinker:
         """
         Update desktop database after creating entries.
 
-        Runs update-desktop-database command if available.
+        Runs update-desktop-database without sudo. For user-local desktop entries, this works fine.
+        For system desktop entries (via env var override), this will fail silently.
+        For .deb programs, apt/dpkg handles desktop database updates automatically.
         """
-        try:
-            if self.sudo_manager is not None:
-                self.sudo_manager.run_as_root(["update-desktop-database", str(self.desktop_dir)])
-            else:
-                subprocess.run(
-                    ["update-desktop-database", str(self.desktop_dir)],
-                    check=False,
-                    capture_output=True,
-                )
-        except (FileNotFoundError, subprocess.CalledProcessError):
-            pass
+        with suppress(FileNotFoundError, subprocess.CalledProcessError):
+            subprocess.run(
+                ["update-desktop-database", str(self.desktop_dir)],
+                check=False,
+                capture_output=True,
+            )
 
     def create_man_symlink(self, target: Path, section: str) -> None:
         """
@@ -202,20 +208,17 @@ class SystemLinker:
         """
         Update man page database after creating/removing man pages.
 
-        Runs mandb command if available to rebuild man page cache.
+        Runs mandb without sudo. For user-local man pages, this works fine.
+        For system man pages (via env var override), this will fail silently.
+        For .deb programs, apt/dpkg handles man page database updates automatically.
         """
-        try:
-            if self.sudo_manager is not None:
-                self.sudo_manager.run_as_root(["mandb"])
-            else:
-                subprocess.run(
-                    ["mandb"],
-                    check=False,
-                    capture_output=True,
-                    timeout=30,
-                )
-        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-            pass
+        with suppress(FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            subprocess.run(
+                ["mandb"],
+                check=False,
+                capture_output=True,
+                timeout=30,
+            )
 
     def remove_binary_symlink(self, name: str) -> bool:
         """

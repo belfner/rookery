@@ -21,9 +21,11 @@ class Config:
     def __init__(self) -> None:
         """Initialize configuration from environment variables with defaults."""
         self.install_dir = self._get_path_from_env("CUSTOM_MANAGED_INSTALL_DIR", Path("/opt/custom-managed-programs"))
-        self.bin_dir = self._get_path_from_env("CUSTOM_MANAGED_BIN_DIR", Path("/usr/local/bin"))
-        self.desktop_dir = self._get_path_from_env("CUSTOM_MANAGED_DESKTOP_DIR", Path("/usr/share/applications"))
-        self.man_dir = self._get_path_from_env("CUSTOM_MANAGED_MAN_DIR", Path("/usr/share/man"))
+        self.bin_dir = self._get_path_from_env("CUSTOM_MANAGED_BIN_DIR", Path("~/.local/bin").expanduser())
+        self.desktop_dir = self._get_path_from_env(
+            "CUSTOM_MANAGED_DESKTOP_DIR", Path("~/.local/share/applications").expanduser()
+        )
+        self.man_dir = self._get_path_from_env("CUSTOM_MANAGED_MAN_DIR", Path("~/.local/share/man").expanduser())
         self.temp_dir = self._get_path_from_env("CUSTOM_MANAGED_TEMP_DIR", Path("/tmp/custom-managed"))
 
     def _get_path_from_env(self, env_var: str, default: Path) -> Path:
@@ -88,6 +90,25 @@ class Config:
                 return (PathSource.ENV, env_var)
 
         return (PathSource.DEFAULT, "default")
+
+    def is_user_local_config(self) -> bool:
+        """
+        Check if all integration paths are under user home directory.
+
+        Returns
+        -------
+        bool
+            True if bin_dir, desktop_dir, and man_dir are all user-local.
+        """
+        user_home = Path.home()
+        try:
+            return (
+                self.bin_dir.is_relative_to(user_home)
+                and self.desktop_dir.is_relative_to(user_home)
+                and self.man_dir.is_relative_to(user_home)
+            )
+        except ValueError:
+            return False
 
 
 # Module-level singleton - initialized on import

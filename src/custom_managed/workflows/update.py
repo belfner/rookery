@@ -27,6 +27,7 @@ async def update_program(
     console: Console,
     force: bool = False,
     sudo_mgr: SudoManager | None = None,
+    create_links: bool = True,
 ) -> tuple[bool, bool]:
     """
     Update a single program.
@@ -40,7 +41,9 @@ async def update_program(
     force : bool
         Force reinstall even if up to date.
     sudo_mgr : SudoManager | None
-        Sudo manager for link creation. If None, skip link creation.
+        Sudo manager for link creation. May be None for user-local paths.
+    create_links : bool
+        Whether to create system links. If False, skip link creation entirely.
 
     Returns
     -------
@@ -60,7 +63,7 @@ async def update_program(
         console.print(f"[cyan]Updating {program.name} to {version_to_install}...[/]")
 
         # Use unified install function
-        await install_or_update_program(program, version_to_install, console, sudo_mgr)
+        await install_or_update_program(program, version_to_install, console, sudo_mgr, create_links)
 
         console.print(f"[green]✓ {program.name} updated to {version_to_install}[/]")
 
@@ -76,6 +79,7 @@ async def update_programs(
     console: Console,
     force: bool = False,
     sudo_mgr: SudoManager | None = None,
+    create_links: bool = True,
 ) -> None:
     """
     Update multiple programs.
@@ -89,7 +93,9 @@ async def update_programs(
     force : bool
         Force reinstall even if up to date.
     sudo_mgr : SudoManager | None
-        Sudo manager for link creation. If None, skip link creation.
+        Sudo manager for link creation. May be None for user-local paths.
+    create_links : bool
+        Whether to create system links. If False, skip link creation entirely.
     """
     # Get metadata and filter for updates
     with console.status("[bold blue]Checking for updates..."):
@@ -129,7 +135,9 @@ async def update_programs(
 
         for i, prog in enumerate(to_update, 1):
             progress.update(task, current=f"[{i}/{len(to_update)}] {prog.name}")
-            success, attempted = await update_program(prog, console, force=force, sudo_mgr=sudo_mgr)
+            success, attempted = await update_program(
+                prog, console, force=force, sudo_mgr=sudo_mgr, create_links=create_links
+            )
             if success:
                 upgraded.append(prog.name)
             elif attempted:
@@ -137,7 +145,7 @@ async def update_programs(
             progress.advance(task)
 
     # Update databases if any programs were updated
-    if sudo_mgr is not None and len(upgraded) > 0:
+    if create_links and len(upgraded) > 0:
         linker = SystemLinker(sudo_manager=sudo_mgr)
         # Check which databases need updating
         needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in upgraded)

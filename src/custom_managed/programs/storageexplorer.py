@@ -15,6 +15,7 @@ from custom_managed.operations import (
     InstallOperation,
 )
 from custom_managed.program import Program
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 class StorageExplorerProgram(Program):
@@ -22,6 +23,7 @@ class StorageExplorerProgram(Program):
 
     # Declarative file locations
     program_name = "storageexplorer"
+    sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("StorageExplorer/StorageExplorer")]
 
     def __init__(self) -> None:

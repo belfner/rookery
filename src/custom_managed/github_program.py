@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from custom_managed.github_utils import get_github_latest_version
 from custom_managed.program import Program
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 class GitHubProgram(Program):
@@ -22,6 +23,7 @@ class GitHubProgram(Program):
         Must be set by subclasses.
     """
 
+    sudo_requirement: SudoRequirement = SudoRequirement.NOT_REQUIRED
     github_repo: str = ""
 
     def __init__(self) -> None:

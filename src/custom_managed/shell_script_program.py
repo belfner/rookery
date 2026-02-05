@@ -6,6 +6,7 @@ from pathlib import Path
 
 from custom_managed.operations import InstallOperation
 from custom_managed.program import Program
+from custom_managed.sudo_requirement import SudoRequirement
 
 
 class ShellScriptProgram(Program):
@@ -24,6 +25,7 @@ class ShellScriptProgram(Program):
         Section is inferred from the extension (.1 -> man1, .8 -> man8).
     """
 
+    sudo_requirement: SudoRequirement = SudoRequirement.NOT_REQUIRED
     scripts: dict[str, str] = {}
     man_pages: dict[str, str] = {}
 

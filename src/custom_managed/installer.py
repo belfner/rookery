@@ -59,7 +59,7 @@ class Installer:
         suffix = archive_path.suffix.lower()
         if suffix in (".tar", ".tgz") or archive_path.name.endswith((".tar.gz", ".tar.xz", ".tar.bz2")):
             with tarfile.open(archive_path) as tar:
-                tar.extractall(dest_dir)
+                tar.extractall(dest_dir, filter="data")
         elif suffix == ".zip":
             with zipfile.ZipFile(archive_path) as zf:
                 zf.extractall(dest_dir)
@@ -159,7 +159,7 @@ class Installer:
             suffix = archive_path.suffix.lower()
             if suffix in (".tar", ".tgz") or archive_path.name.endswith((".tar.gz", ".tar.xz", ".tar.bz2")):
                 with tarfile.open(archive_path) as tar:
-                    tar.extractall(tmp_path)
+                    tar.extractall(tmp_path, filter="data")
             elif suffix == ".zip":
                 with zipfile.ZipFile(archive_path) as zf:
                     zf.extractall(tmp_path)
