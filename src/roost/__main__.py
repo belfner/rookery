@@ -153,7 +153,7 @@ def install_command(
                 # Check if paths need sudo for linking
                 sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
 
-            success, attempted = asyncio.run(
+            success, attempted, _version = asyncio.run(
                 install_program(prog, console, sudo_mgr=sudo_mgr, create_links=not no_links)
             )
             if not success and attempted:
@@ -242,7 +242,7 @@ def update_command(
             else:
                 sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
 
-            success, attempted = asyncio.run(
+            success, attempted, _version = asyncio.run(
                 update_program(prog, console, force=force, sudo_mgr=sudo_mgr, create_links=not no_links)
             )
             if not success and attempted:
@@ -709,6 +709,7 @@ def info_command() -> None:
         token_status = "[yellow]Not set (60 requests/hour)[/yellow]"
 
     console.print(f"  GitHub Token: {token_status}")
+    console.print(f"  Max Parallel: {config.max_parallel}")
     console.print()
 
     # Configuration paths

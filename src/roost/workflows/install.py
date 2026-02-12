@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from rich.console import Console
 from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
 )
 
+from roost.config import config
 from roost.program import Program
 from roost.sudo import SudoManager
 from roost.system import SystemLinker
@@ -51,14 +55,7 @@ async def install_or_update_program(
 
     if create_links and not isinstance(program, DebProgram):
         linker = SystemLinker(sudo_manager=sudo_mgr)
-        results = linker.setup_program(program)
-
-        if results["symlinks"]:
-            console.print("[green]✓ Created symlinks[/]")
-        if results["desktop"]:
-            console.print("[green]✓ Created desktop entry[/]")
-        if results["man"]:
-            console.print("[green]✓ Created man page links[/]")
+        linker.setup_program(program)
 
 
 async def install_program(
@@ -66,7 +63,8 @@ async def install_program(
     console: Console,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
-) -> tuple[bool, bool]:
+    batch: bool = False,
+) -> tuple[bool, bool, str]:
     """
     Install a new program.
 
@@ -80,29 +78,30 @@ async def install_program(
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
+    batch : bool
+        When True, suppress per-program completion output (summary handles it).
 
     Returns
     -------
-    tuple[bool, bool]
-        (success, attempted) - success indicates if install succeeded,
-        attempted indicates if an install was tried.
+    tuple[bool, bool, str]
+        (success, attempted, version) - success indicates if install succeeded,
+        attempted indicates if an install was tried, version is the installed version.
     """
     try:
         # Get latest version
         latest_version = await program.get_latest_version()
 
-        console.print(f"[cyan]Installing {program.name} {latest_version}...[/]")
-
         # Use unified install function
         await install_or_update_program(program, latest_version, console, sudo_mgr, create_links)
 
-        console.print(f"[green]✓ {program.name} installed to {latest_version}[/]")
+        if not batch:
+            console.print(f"[green]✓ Installed {program.name} [blue]{latest_version}[/][/]")
 
-        return (True, True)
+        return (True, True, latest_version)
 
     except Exception as e:
         console.print(f"[red]✗ Failed to install {program.name}: {e}[/]")
-        return (False, True)
+        return (False, True, "")
 
 
 async def install_programs(
@@ -125,10 +124,12 @@ async def install_programs(
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
     """
-    console.print(f"[cyan]Installing {len(programs)} program(s)...[/]")
+    names = ", ".join(sorted((p.name for p in programs), key=str.casefold))
+    console.print(f"[cyan]Installing: {names}[/]")
 
-    installed: list[str] = []
+    installed: list[tuple[str, str]] = []
     failed: list[str] = []
+    semaphore = asyncio.Semaphore(config.max_parallel)
 
     with Progress(
         SpinnerColumn(),
@@ -141,21 +142,27 @@ async def install_programs(
     ) as progress:
         task = progress.add_task("Installing", total=len(programs), current="")
 
-        for i, prog in enumerate(programs, 1):
-            progress.update(task, current=f"[{i}/{len(programs)}] {prog.name}")
-            success, attempted = await install_program(prog, console, sudo_mgr=sudo_mgr, create_links=create_links)
-            if success:
-                installed.append(prog.name)
-            elif attempted:
-                failed.append(prog.name)
-            progress.advance(task)
+        async def install_one(prog: Program, progress: Progress, task: TaskID) -> None:
+            async with semaphore:
+                success, attempted, version = await install_program(
+                    prog, console, sudo_mgr=sudo_mgr, create_links=create_links, batch=True
+                )
+                if success:
+                    installed.append((prog.name, version))
+                elif attempted:
+                    failed.append(prog.name)
+                progress.update(task, current=prog.name)
+                progress.advance(task)
+
+        await asyncio.gather(*[install_one(prog, progress, task) for prog in programs])
 
     # Update databases if any programs were installed
     if create_links and len(installed) > 0:
         linker = SystemLinker(sudo_manager=sudo_mgr)
         # Check which databases need updating
-        needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in installed)
-        needs_man_update = any(len(p.get_man_pages()) > 0 for p in programs if p.name in installed)
+        installed_names = {n for n, _ in installed}
+        needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in installed_names)
+        needs_man_update = any(len(p.get_man_pages()) > 0 for p in programs if p.name in installed_names)
 
         if needs_desktop_update:
             linker.update_desktop_database()
@@ -168,9 +175,10 @@ async def install_programs(
     console.print("[bold cyan]=========================================[/]")
 
     if len(installed) > 0:
+        installed.sort(key=lambda x: x[0].casefold())
         console.print(f"[bold green]Installed: {len(installed)}[/]")
-        for name in installed:
-            console.print(f"  [green]✓ {name}[/]")
+        for name, version in installed:
+            console.print(f"  [green]✓ {name} [blue]{version}[/][/]")
 
     if len(failed) > 0:
         console.print(f"[bold red]Failed: {len(failed)}[/]")

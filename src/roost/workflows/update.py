@@ -14,6 +14,7 @@ from rich.progress import (
     TextColumn,
 )
 
+from roost.config import config
 from roost.program import (
     Program,
     ProgramMetadata,
@@ -29,7 +30,8 @@ async def update_program(
     force: bool = False,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
-) -> tuple[bool, bool]:
+    batch: bool = False,
+) -> tuple[bool, bool, str]:
     """
     Update a single program.
 
@@ -45,34 +47,37 @@ async def update_program(
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
+    batch : bool
+        When True, suppress per-program output (summary handles it).
 
     Returns
     -------
-    tuple[bool, bool]
-        (success, attempted) - success indicates if update succeeded,
-        attempted indicates if an update was tried (vs skipped).
+    tuple[bool, bool, str]
+        (success, attempted, version) - success indicates if update succeeded,
+        attempted indicates if an update was tried (vs skipped),
+        version is the installed version.
     """
     try:
         meta = await program.get_metadata()
 
         if not force and not meta.update_available:
-            console.print(f"[dim]{program.name} is already up to date ({meta.current_version})[/]")
-            return (False, False)
+            if not batch:
+                console.print(f"[dim]{program.name} is already up to date ({meta.current_version})[/]")
+            return (False, False, "")
 
         version_to_install = meta.latest_version or meta.current_version
-
-        console.print(f"[cyan]Updating {program.name} to {version_to_install}...[/]")
 
         # Use unified install function
         await install_or_update_program(program, version_to_install, console, sudo_mgr, create_links)
 
-        console.print(f"[green]✓ {program.name} updated to {version_to_install}[/]")
+        if not batch:
+            console.print(f"[green]✓ Updated {program.name} [blue]{version_to_install}[/][/]")
 
-        return (True, True)
+        return (True, True, version_to_install)
 
     except Exception as e:
         console.print(f"[red]✗ Failed to update {program.name}: {e}[/]")
-        return (False, True)
+        return (False, True, "")
 
 
 async def update_programs(
@@ -137,10 +142,9 @@ async def update_programs(
         console.print("[green]All programs are up to date[/]")
         return
 
-    console.print(f"[cyan]Updating {len(to_update)} program(s)...[/]")
-
-    upgraded: list[str] = []
+    upgraded: list[tuple[str, str]] = []
     failed: list[str] = []
+    semaphore = asyncio.Semaphore(config.max_parallel)
 
     with Progress(
         SpinnerColumn(),
@@ -153,23 +157,27 @@ async def update_programs(
     ) as progress:
         task = progress.add_task("Updating", total=len(to_update), current="")
 
-        for i, prog in enumerate(to_update, 1):
-            progress.update(task, current=f"[{i}/{len(to_update)}] {prog.name}")
-            success, attempted = await update_program(
-                prog, console, force=force, sudo_mgr=sudo_mgr, create_links=create_links
-            )
-            if success:
-                upgraded.append(prog.name)
-            elif attempted:
-                failed.append(prog.name)
-            progress.advance(task)
+        async def update_one(prog: Program, progress: Progress, task: TaskID) -> None:
+            async with semaphore:
+                success, attempted, version = await update_program(
+                    prog, console, force=force, sudo_mgr=sudo_mgr, create_links=create_links, batch=True
+                )
+                if success:
+                    upgraded.append((prog.name, version))
+                elif attempted:
+                    failed.append(prog.name)
+                progress.update(task, current=prog.name)
+                progress.advance(task)
+
+        await asyncio.gather(*[update_one(prog, progress, task) for prog in to_update])
 
     # Update databases if any programs were updated
     if create_links and len(upgraded) > 0:
         linker = SystemLinker(sudo_manager=sudo_mgr)
         # Check which databases need updating
-        needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in upgraded)
-        needs_man_update = any(len(p.get_man_pages()) > 0 for p in programs if p.name in upgraded)
+        upgraded_names = {n for n, _ in upgraded}
+        needs_desktop_update = any(p.get_desktop_entry() is not None for p in programs if p.name in upgraded_names)
+        needs_man_update = any(len(p.get_man_pages()) > 0 for p in programs if p.name in upgraded_names)
 
         if needs_desktop_update:
             linker.update_desktop_database()
@@ -182,9 +190,10 @@ async def update_programs(
     console.print("[bold cyan]=========================================[/]")
 
     if len(upgraded) > 0:
+        upgraded.sort(key=lambda x: x[0].casefold())
         console.print(f"[bold green]Upgraded: {len(upgraded)}[/]")
-        for name in upgraded:
-            console.print(f"  [green]✓ {name}[/]")
+        for name, version in upgraded:
+            console.print(f"  [green]✓ {name} [blue]{version}[/][/]")
 
     if len(failed) > 0:
         console.print(f"[bold red]Failed: {len(failed)}[/]")

@@ -91,6 +91,24 @@ class Config:
 
         return (PathSource.DEFAULT, "default")
 
+    @property
+    def max_parallel(self) -> int:
+        """
+        Maximum number of parallel install/update operations.
+
+        Reads from ROOST_MAX_PARALLEL env var, defaults to 4, clamped to minimum 1.
+
+        Returns
+        -------
+        int
+            Concurrency limit for batch operations.
+        """
+        value = os.getenv("ROOST_MAX_PARALLEL", "10")
+        try:
+            return max(1, int(value))
+        except ValueError:
+            return 4
+
     def is_user_local_config(self) -> bool:
         """
         Check if all integration paths are under user home directory.
