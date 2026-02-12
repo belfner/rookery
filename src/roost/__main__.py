@@ -404,7 +404,7 @@ def uninstall_command(
         # Uninstall single program
         try:
             prog = get_program(program)
-            uninstall_program(prog, console, sudo_mgr=sudo_mgr)
+            uninstall_program(prog, console, sudo_mgr=sudo_mgr, skip_links=no_links)
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
@@ -426,7 +426,7 @@ def uninstall_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        uninstall_programs(installed, console, sudo_mgr=sudo_mgr)
+        uninstall_programs(installed, console, sudo_mgr=sudo_mgr, skip_links=no_links)
 
 
 @app.command(name="link")

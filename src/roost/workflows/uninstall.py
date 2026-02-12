@@ -61,6 +61,7 @@ def uninstall_program(
     program: Program,
     console: Console,
     sudo_mgr: SudoManager | None = None,
+    skip_links: bool = False,
 ) -> None:
     """
     Uninstall a single program.
@@ -73,6 +74,8 @@ def uninstall_program(
         Rich console for output.
     sudo_mgr : SudoManager | None
         Sudo manager for link removal. If None, skip link removal.
+    skip_links : bool
+        Whether the user explicitly requested skipping link removal.
     """
     if not program.install_dir.exists():
         console.print(f"[yellow]{program.name} is not installed[/]")
@@ -85,7 +88,7 @@ def uninstall_program(
         return
 
     # Remove system links first
-    if sudo_mgr:
+    if not skip_links:
         linker = SystemLinker(sudo_manager=sudo_mgr)
         results = linker.remove_program_links(program)
 
@@ -100,15 +103,16 @@ def uninstall_program(
     shutil.rmtree(program.install_dir)
     console.print(f"[green]✓ Uninstalled {program.name}[/]")
 
-    # Warn if links were skipped
-    if not sudo_mgr:
-        console.print("[yellow]Note: System links not removed (use without --no-links to remove)[/]")
+    # Warn if links were explicitly skipped by user
+    if skip_links:
+        console.print("[yellow]System links not removed (run without --no-links to remove)[/]")
 
 
 def uninstall_programs(
     programs: list[Program],
     console: Console,
     sudo_mgr: SudoManager | None = None,
+    skip_links: bool = False,
 ) -> None:
     """
     Uninstall multiple programs.
@@ -121,10 +125,12 @@ def uninstall_programs(
         Rich console for output.
     sudo_mgr : SudoManager | None
         Sudo manager for link removal. If None, skip link removal.
+    skip_links : bool
+        Whether the user explicitly requested skipping link removal.
     """
     from roost.deb_program import DebProgram
 
-    linker = SystemLinker(sudo_manager=sudo_mgr) if sudo_mgr else None
+    linker = SystemLinker(sudo_manager=sudo_mgr) if not skip_links else None
     uninstalled_count = 0
     links_removed_count = 0
     desktop_changed = False
@@ -160,7 +166,7 @@ def uninstall_programs(
             linker.update_man_database()
 
     console.print(f"\n[green]Uninstalled {uninstalled_count} program(s)[/]")
-    if sudo_mgr:
+    if not skip_links:
         console.print(f"[green]Removed links for {links_removed_count} program(s)[/]")
-    else:
-        console.print("[yellow]System links not removed (use without --no-links to remove)[/]")
+    elif skip_links:
+        console.print("[yellow]System links not removed (run without --no-links to remove)[/]")
