@@ -1,7 +1,7 @@
 [project]
-name = "custom-managed"
-version = "0.2.1"
-description = "Custom package manager for third-party development tools"
+name = "roost"
+version = "0.3.0"
+description = "Roost - package manager for third-party development tools"
 readme = "README.md"
 authors = [
     { name = "belfner", email = "belfner@belfner.com" }
@@ -22,7 +22,7 @@ dev = [
 ]
 
 [project.scripts]
-custom-managed = "custom_managed.__main__:app"
+roost = "roost.__main__:app"
 
 [build-system]
 requires = ["uv_build>=0.9.4,<0.10.0"]
