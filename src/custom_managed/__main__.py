@@ -11,6 +11,14 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TaskProgressColumn,
+    TextColumn,
+)
 from rich.table import Table
 
 from custom_managed.cli_helpers import (
@@ -257,10 +265,35 @@ def update_command(
 
         # Check if any programs need updating
         async def check_updates() -> tuple[list[Program], list[ProgramMetadata | BaseException]]:
-            metadata_list = await asyncio.gather(*[p.get_metadata() for p in installed], return_exceptions=True)
+            async def check_with_progress(
+                program: Program,
+                progress: Progress,
+                task: TaskID,
+            ) -> ProgramMetadata | BaseException:
+                result: ProgramMetadata | BaseException
+                try:
+                    result = await program.get_metadata()
+                except Exception as e:
+                    result = e
+                finally:
+                    progress.advance(task)
+                return result
+
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console,
+                transient=True,
+            ) as progress:
+                task = progress.add_task("Checking for updates", total=len(installed))
+                metadata_list = await asyncio.gather(*[check_with_progress(p, progress, task) for p in installed])
+
             to_update: list[Program] = []
             for prog, meta in zip(installed, metadata_list, strict=True):
                 if isinstance(meta, BaseException):
+                    console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
                     continue
                 if force or meta.update_available:
                     to_update.append(prog)

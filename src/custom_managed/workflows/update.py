@@ -9,6 +9,7 @@ from rich.progress import (
     BarColumn,
     Progress,
     SpinnerColumn,
+    TaskID,
     TaskProgressColumn,
     TextColumn,
 )
@@ -97,13 +98,32 @@ async def update_programs(
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
     """
+
     # Get metadata and filter for updates
-    with console.status("[bold blue]Checking for updates..."):
+    async def check_with_progress(
+        program: Program,
+        progress: Progress,
+        task: TaskID,
+    ) -> ProgramMetadata | BaseException:
+        result: ProgramMetadata | BaseException
+        try:
+            result = await program.get_metadata()
+        except Exception as e:
+            result = e
+        finally:
+            progress.advance(task)
+        return result
 
-        async def get_all_metadata() -> list[ProgramMetadata | BaseException]:
-            return await asyncio.gather(*[p.get_metadata() for p in programs], return_exceptions=True)
-
-        metadata_list = await get_all_metadata()
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Checking for updates", total=len(programs))
+        metadata_list = await asyncio.gather(*[check_with_progress(p, progress, task) for p in programs])
 
     to_update = []
     for prog, meta in zip(programs, metadata_list, strict=True):
