@@ -6,8 +6,14 @@ import asyncio
 import os
 import shutil
 import sys
-from contextlib import suppress
-from typing import Annotated
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+)
+
+
+if TYPE_CHECKING:
+    from roost.sudo import SudoManager
 
 import typer
 from rich.console import Console
@@ -357,6 +363,45 @@ def update_command(
             check_and_warn_path(console)
 
 
+def _resolve_uninstall_sudo(console: Console, programs_to_check: list[Program], no_links: bool) -> SudoManager | None:
+    """
+    Determine if sudo is needed for uninstall and authenticate.
+
+    Parameters
+    ----------
+    console : Console
+        Rich console for output.
+    programs_to_check : list[Program]
+        Programs being uninstalled.
+    no_links : bool
+        Whether link removal is skipped.
+
+    Returns
+    -------
+    SudoManager | None
+        Validated sudo manager if needed, None otherwise.
+    """
+    requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_check)
+
+    if requires_sudo_programs:
+        return validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for uninstallation")
+
+    if not no_links:
+        needs_sudo = False
+        if len(programs_to_check) > 0:
+            linker_check = SystemLinker()
+            for prog in programs_to_check:
+                existing = linker_check.get_existing_links(prog)
+                if len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0:
+                    needs_sudo = True
+                    break
+
+        if needs_sudo:
+            return validate_sudo_if_needed(console, "Hint: Use --no-links to skip system link removal")
+
+    return None
+
+
 @app.command(name="uninstall")
 def uninstall_command(
     program: Annotated[str | None, typer.Argument(help="Program name to uninstall (optional)")] = None,
@@ -375,39 +420,16 @@ def uninstall_command(
         console.print("[yellow]Example: roost uninstall nvim[/]")
         raise typer.Exit(1)
 
-    # Setup sudo only if linking enabled and links exist
-    sudo_mgr = None
-    if not no_links:
-        # Check if any programs have existing links
-        programs_to_check = []
-        if program is not None:
-            with suppress(KeyError):
-                programs_to_check = [get_program(program)]
-        else:
-            programs_to_check = [p for p in list_programs() if p.version_file.exists()]
-
-        # Check if any links exist
-        needs_sudo = False
-        if len(programs_to_check) > 0:
-            linker_check = SystemLinker()
-            for prog in programs_to_check:
-                existing = linker_check.get_existing_links(prog)
-                if len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0:
-                    needs_sudo = True
-                    break
-
-        # Only request sudo if links exist
-        if needs_sudo:
-            sudo_mgr = validate_sudo_if_needed(console, "Hint: Use --no-links to skip system link removal")
-
     if program is not None:
         # Uninstall single program
         try:
             prog = get_program(program)
-            uninstall_program(prog, console, sudo_mgr=sudo_mgr, skip_links=no_links)
         except KeyError as e:
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
+
+        sudo_mgr = _resolve_uninstall_sudo(console, [prog], no_links)
+        uninstall_program(prog, console, sudo_mgr=sudo_mgr, skip_links=no_links)
     else:
         # Uninstall all programs (--all flag was used)
         programs = list_programs()
@@ -426,6 +448,7 @@ def uninstall_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
+        sudo_mgr = _resolve_uninstall_sudo(console, installed, no_links)
         uninstall_programs(installed, console, sudo_mgr=sudo_mgr, skip_links=no_links)
 
 

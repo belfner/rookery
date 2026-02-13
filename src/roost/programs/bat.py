@@ -11,6 +11,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -71,4 +72,5 @@ class BatProgram(GitHubProgram):
                     "*/bat.1": "bat.1",
                 },
             ),
+            MakeExecutable("bat"),
         ]

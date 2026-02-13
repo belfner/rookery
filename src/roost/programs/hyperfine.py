@@ -11,6 +11,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -70,4 +71,5 @@ class Hyperfine(GitHubProgram):
                     "*/hyperfine.1": "hyperfine.1",
                 },
             ),
+            MakeExecutable("hyperfine"),
         ]

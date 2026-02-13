@@ -9,6 +9,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -87,4 +88,5 @@ class JustProgram(GitHubProgram):
                     "just.1": "just.1",
                 },
             ),
+            MakeExecutable("just"),
         ]

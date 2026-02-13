@@ -36,25 +36,32 @@ def uninstall_deb_program(program: Program, console: Console) -> None:
 
     package_name = package_metadata.read_text().strip()
 
-    console.print(f"Removing {package_name}...")
     try:
         subprocess.run(
             ["sudo", "apt", "remove", "-y", package_name],
             check=True,
+            capture_output=True,
+            text=True,
         )
     except subprocess.CalledProcessError as e:
+        if e.stdout:
+            console.print(e.stdout)
+        if e.stderr:
+            console.print(f"[red]{e.stderr}[/]")
         raise RuntimeError(f"Failed to remove {package_name}: apt returned {e.returncode}") from e
 
-    console.print("\n[yellow]Package removed. Would you like to remove unused dependencies?[/]")
-    response = input("Run 'sudo apt autoremove'? (y/n): ")
+    response = input(f"\nAutoremove (apt) unused dependencies for {package_name}? (y/n): ")
     if response.lower() == "y":
-        subprocess.run(["sudo", "apt", "autoremove", "-y"], check=True)
-        console.print("[green]✓ Removed unused dependencies[/]")
+        try:
+            subprocess.run(["sudo", "apt", "autoremove", "-y"], check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            if e.stdout:
+                console.print(e.stdout)
+            if e.stderr:
+                console.print(f"[red]{e.stderr}[/]")
 
     if program.install_dir.exists():
         shutil.rmtree(program.install_dir)
-
-    console.print(f"[green]✓ Uninstalled {program.name}[/]")
 
 
 def uninstall_program(
@@ -133,6 +140,7 @@ def uninstall_programs(
     linker = SystemLinker(sudo_manager=sudo_mgr) if not skip_links else None
     uninstalled_count = 0
     links_removed_count = 0
+    system_managed_count = 0
     desktop_changed = False
     man_changed = False
 
@@ -141,6 +149,7 @@ def uninstall_programs(
             if isinstance(prog, DebProgram):
                 uninstall_deb_program(prog, console)
                 uninstalled_count += 1
+                system_managed_count += 1
                 continue
 
             # Remove links first
@@ -168,5 +177,7 @@ def uninstall_programs(
     console.print(f"\n[green]Uninstalled {uninstalled_count} program(s)[/]")
     if not skip_links:
         console.print(f"[green]Removed links for {links_removed_count} program(s)[/]")
+        if system_managed_count > 0:
+            console.print(f"[green]{system_managed_count} program(s) managed by system package manager[/]")
     elif skip_links:
         console.print("[yellow]System links not removed (run without --no-links to remove)[/]")

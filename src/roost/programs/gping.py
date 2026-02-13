@@ -14,6 +14,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -96,4 +97,5 @@ class GpingProgram(GitHubProgram):
                     "gping.1": "gping.1",
                 },
             ),
+            MakeExecutable("gping"),
         ]

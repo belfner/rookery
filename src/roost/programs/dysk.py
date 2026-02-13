@@ -11,6 +11,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -74,4 +75,5 @@ class DyskProgram(GitHubProgram):
                     "build/completion/*": "completion/",
                 },
             ),
+            MakeExecutable("dysk"),
         ]

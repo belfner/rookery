@@ -11,6 +11,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -70,6 +71,7 @@ class EzaProgram(GitHubProgram):
         return [
             DownloadArchive("eza", asset_url),
             ExtractFiles("eza", {"eza": "eza"}),
+            MakeExecutable("eza"),
             DownloadArchive("eza-man", man_page_url),
             ExtractFiles(
                 "eza-man",

@@ -11,6 +11,7 @@ from roost.operations import (
     DownloadArchive,
     ExtractFiles,
     InstallOperation,
+    MakeExecutable,
 )
 
 
@@ -72,6 +73,7 @@ class DustProgram(GitHubProgram):
             # Download and extract binary
             DownloadArchive("binary", binary_url),
             ExtractFiles("binary", {"*/dust": "dust"}),
+            MakeExecutable("dust"),
             # Download and extract man page from source
             DownloadArchive("source", source_url),
             ExtractFiles("source", {"*/man-page/dust.1": "dust.1"}),
