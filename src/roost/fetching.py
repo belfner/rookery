@@ -14,6 +14,23 @@ from rich.progress import (
 
 
 @dataclass
+class RepoFile:
+    """
+    File discovered from a GitHub repository tree.
+
+    Attributes
+    ----------
+    path : str
+        File path relative to repository root.
+    download_url : str
+        Raw content URL for downloading.
+    """
+
+    path: str
+    download_url: str
+
+
+@dataclass
 class Asset:
     """
     Downloadable asset information.
@@ -267,6 +284,49 @@ class GitHubFetcher:
             version=data["tag_name"].lstrip("v"),
             assets=assets,
         )
+
+    async def get_repo_tree(self, repo: str, ref: str = "main") -> list[RepoFile]:
+        """
+        Get list of files from a GitHub repository tree.
+
+        Parameters
+        ----------
+        repo : str
+            Repository in "owner/repo" format.
+        ref : str
+            Git ref (branch, tag, or commit SHA), by default "main".
+
+        Returns
+        -------
+        list[RepoFile]
+            List of files with their raw download URLs.
+
+        Raises
+        ------
+        httpx.HTTPError
+            If request fails.
+        GitHubRateLimitError
+            If GitHub API rate limit is exceeded.
+        """
+        url = f"https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
+        response = await self.client.get(url)
+
+        if response.status_code == 403:
+            error_message = response.text.lower()
+            if "rate limit" in error_message or "api rate limit exceeded" in error_message:
+                raise GitHubRateLimitError(repo, authenticated=self._token is not None)
+
+        response.raise_for_status()
+        data = response.json()
+
+        return [
+            RepoFile(
+                path=entry["path"],
+                download_url=f"https://raw.githubusercontent.com/{repo}/{ref}/{entry['path']}",
+            )
+            for entry in data.get("tree", [])
+            if entry.get("type") == "blob"
+        ]
 
     async def close(self) -> None:
         """Close HTTP client."""
