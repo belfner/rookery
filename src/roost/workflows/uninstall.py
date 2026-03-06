@@ -7,6 +7,7 @@ import subprocess
 
 from rich.console import Console
 
+from roost.deb_program import DebProgram
 from roost.program import Program
 from roost.sudo import SudoManager
 from roost.system import SystemLinker
@@ -88,8 +89,6 @@ def uninstall_program(
         console.print(f"[yellow]{program.name} is not installed[/]")
         return
 
-    from roost.deb_program import DebProgram
-
     if isinstance(program, DebProgram):
         uninstall_deb_program(program, console)
         return
@@ -135,8 +134,6 @@ def uninstall_programs(
     skip_links : bool
         Whether the user explicitly requested skipping link removal.
     """
-    from roost.deb_program import DebProgram
-
     linker = SystemLinker(sudo_manager=sudo_mgr) if not skip_links else None
     uninstalled_count = 0
     links_removed_count = 0

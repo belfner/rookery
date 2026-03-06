@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 from abc import (
     ABC,
     abstractmethod,
@@ -177,14 +178,14 @@ class ExtractArchive(InstallOperation):
         context : InstallContext
             Installation context.
         """
-        import shutil
-
         archive_path = context.downloads[self.archive_id]
         dest_dir = context.install_dir
 
-        # Handle extract_to_subdir: create wrapper directory and extract into it
+        # Handle extract_to_subdir: remove old directory and extract into it
         if self.extract_to_subdir:
             dest_dir = context.install_dir / self.extract_to_subdir
+            if dest_dir.exists():
+                shutil.rmtree(dest_dir)
             dest_dir.mkdir(parents=True, exist_ok=True)
             context.installer.extract_archive(archive_path, dest_dir)
             return
@@ -194,18 +195,19 @@ class ExtractArchive(InstallOperation):
 
         # Handle rename_top_level: find single top-level directory and rename it
         if self.rename_top_level:
-            # Find extracted top-level directories
-            extracted_items = [item for item in dest_dir.iterdir() if item.is_dir()]
+            # Find extracted top-level directories (exclude the target name to avoid confusion)
+            new_path = dest_dir / self.rename_top_level
+            extracted_items = [item for item in dest_dir.iterdir() if item.is_dir() and item != new_path]
 
             # Should be exactly one top-level directory
             if len(extracted_items) == 1:
                 old_path = extracted_items[0]
-                new_path = dest_dir / self.rename_top_level
 
-                # Only rename if different
-                if old_path != new_path:
-                    # Use shutil.move for atomic rename
-                    shutil.move(str(old_path), str(new_path))
+                # Remove existing target directory to avoid ETXTBSY on running binaries
+                if new_path.exists():
+                    shutil.rmtree(new_path)
+
+                shutil.move(str(old_path), str(new_path))
 
 
 class DownloadFile(InstallOperation):
@@ -294,8 +296,6 @@ class DeletePath(InstallOperation):
         context : InstallContext
             Installation context.
         """
-        import shutil
-
         for path in context.install_dir.glob(self.path_pattern):
             if path.is_dir():
                 shutil.rmtree(path)

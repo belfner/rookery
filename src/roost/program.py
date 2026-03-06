@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import getpass
+import grp
+import os
 import shutil
 from abc import (
     ABC,
@@ -12,11 +15,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from roost.config import config
+from roost.installer import Installer
 from roost.operations import (
     InstallContext,
     InstallOperation,
 )
+from roost.sudo import SudoManager
 from roost.sudo_requirement import SudoRequirement
+from roost.version import compare_versions
 
 
 if TYPE_CHECKING:
@@ -30,6 +36,7 @@ class ProgramMetadata:
     current_version: str
     latest_version: str | None
     update_available: bool
+    downgrade_available: bool
     name: str
 
 
@@ -87,12 +94,6 @@ class Program(ABC):
         Creates the base install directory with sudo if needed, then sets
         ownership to current user.
         """
-        import getpass
-        import grp
-        import os
-
-        from roost.sudo import SudoManager
-
         base_install_dir = config.install_dir
 
         # If base directory doesn't exist and we don't have write access to parent
@@ -197,8 +198,6 @@ class Program(ABC):
         version : str
             Version to install.
         """
-        from roost.installer import Installer
-
         try:
             # Ensure install directory exists with proper ownership
             self._ensure_install_dir()
@@ -410,11 +409,13 @@ class Program(ABC):
         """
         current = self.read_version_file()
         latest = await self.get_latest_version()
-        update_available = latest != current and current != "0.0.0"
+        update_available = compare_versions(latest, current) > 0 and current != "0.0.0"
+        downgrade_available = compare_versions(latest, current) < 0 and current != "0.0.0"
 
         return ProgramMetadata(
             current_version=current,
             latest_version=latest,
             update_available=update_available,
+            downgrade_available=downgrade_available,
             name=self.name,
         )

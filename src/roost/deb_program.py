@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from roost.github_program import GitHubProgram
+from roost.link_status import LinkStatus
 from roost.sudo_requirement import SudoRequirement
 
 
-if TYPE_CHECKING:
-    from roost.link_status import LinkStatus
-
-
+# noinspection PyAbstractClass
 class DebProgram(GitHubProgram):
     """
     Base class for programs distributed as .deb packages.
@@ -120,8 +117,6 @@ class DebProgram(GitHubProgram):
         LinkStatus
             LINKED if installed, NOT_INSTALLED otherwise.
         """
-        from roost.link_status import LinkStatus
-
         if not self.version_file.exists():
             return LinkStatus.NOT_INSTALLED
         return LinkStatus.LINKED

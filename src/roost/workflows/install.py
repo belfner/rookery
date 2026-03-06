@@ -15,6 +15,7 @@ from rich.progress import (
 )
 
 from roost.config import config
+from roost.deb_program import DebProgram
 from roost.program import Program
 from roost.sudo import SudoManager
 from roost.system import SystemLinker
@@ -51,8 +52,6 @@ async def install_or_update_program(
     # Create system links if requested
     # For .deb programs, SystemLinker is never used (apt handles everything)
     # For archive programs with user-local paths, sudo_manager may be None
-    from roost.deb_program import DebProgram
-
     if create_links and not isinstance(program, DebProgram):
         linker = SystemLinker(sudo_manager=sudo_mgr)
         linker.setup_program(program)

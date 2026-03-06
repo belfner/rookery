@@ -220,17 +220,17 @@ fi
 
 FUNTARGZ_SCRIPT = r"""#!/bin/sh
 # Default behavior flags
-keep_structure=1
 verbose=0
 extract_to_current=0
 safe_mode=0
+force_overwrite=0
 
 # Function to show help
 show_help() {
     echo "Usage: $0 [-d dir] [-c] [-f] [-s] [-v] [-h|--help] input_file.tar.gz"
     echo "  -d dir      Extract to specified directory (overrides smart behavior)"
     echo "  -c          Extract to current directory (overrides smart behavior)"
-    echo "  -f          Flatten directory structure (extract all files to target directory)"
+    echo "  -f, --force Force overwrite if target already exists"
     echo "  -s          Safe mode: always extract to directory named after archive (no structure checking)"
     echo "  -v          Verbose output (show extracted files)"
     echo "  -h, --help  Show this help message and exit"
@@ -244,7 +244,7 @@ show_help() {
     echo "  $0 -s archive.tar.gz                # Safe mode: always extract to ./archive/ directory"
     echo "  $0 -d mydir archive.tar.gz          # Force extract to ./mydir/"
     echo "  $0 -c archive.tar.gz                # Force extract to current directory"
-    echo "  $0 -f -d output archive.tar.gz      # Flatten structure to ./output/"
+    echo "  $0 -f archive.tar.gz                # Overwrite existing output"
     echo "  $0 -v archive.tar.gz                # Extract with verbose output"
 }
 
@@ -294,48 +294,10 @@ get_archive_basename() {
     esac
 }
 
-# Function to analyze tar archive root structure (fast method)
-analyze_tar_structure() {
-    input_file="$1"
-
-    # Fast method: only read the first few entries from the archive
-    # This avoids decompressing the entire file
-    first_entries=$(pigz -dkc "$input_file" | tar tf - | head -20)
-
-    # Get unique root-level entries from first few entries
-    root_entries=$(echo "$first_entries" | sed 's|/.*||' | sort -u)
-    root_count=$(echo "$root_entries" | wc -l)
-
-    # If we see multiple root entries in first 20 files, it's definitely multiple
-    if [ "$root_count" -gt 1 ]; then
-        echo "multiple_entries"
-        return 1
-    fi
-
-    # Single root entry found in sample - check if it's a directory
-    root_entry=$(echo "$root_entries" | head -n1)
-    if echo "$first_entries" | grep -q "^${root_entry}/"; then
-        # Verify this is truly the only root by checking more entries
-        # Use a more targeted approach - look for any entry that doesn't start with our root
-        if pigz -dkc "$input_file" | tar tf - | head -100 | grep -qv "^${root_entry}"; then
-            echo "multiple_entries"
-            return 1
-        else
-            echo "single_dir:$root_entry"
-            return 0
-        fi
-    fi
-
-    # Single file at root level
-    echo "single_file"
-    return 1
-}
-
 # Function to create output directory if it doesn't exist
 ensure_output_dir() {
     output_dir="$1"
     if [ "$output_dir" != "." ] && [ ! -d "$output_dir" ]; then
-        echo "Creating output directory: $output_dir/"
         if ! mkdir -p "$output_dir"; then
             echo "Error: Failed to create output directory '$output_dir'."
             exit 1
@@ -361,8 +323,8 @@ while [ "$#" -gt 0 ]; do
             extract_to_current=1
             shift
             ;;
-        -f)  # Flatten structure
-            keep_structure=0
+        -f|--force)  # Force overwrite
+            force_overwrite=1
             shift
             ;;
         -s)  # Safe mode
@@ -405,42 +367,40 @@ fi
 
 # Get and validate input file
 input_file="$1"
+
 validate_input "$input_file"
 
 # Determine output directory if not specified
+use_smart_mode=0
 if [ -z "$output_dir" ]; then
     if [ "$extract_to_current" -eq 1 ]; then
         output_dir="."
     elif [ "$safe_mode" -eq 1 ]; then
-        # Safe mode: always extract to directory named after archive
         archive_basename=$(get_archive_basename "$input_file")
         output_dir="./$archive_basename"
         echo "Safe mode: extracting to '$output_dir/'"
     else
-        # Smart behavior: analyze archive structure
-        echo "Analyzing archive structure..."
-        structure_info=$(analyze_tar_structure "$input_file")
+        # Smart mode: extract to temp dir, inspect filesystem after
+        use_smart_mode=1
+        archive_basename=$(get_archive_basename "$input_file")
+        tmpdir=".tmp-${archive_basename}-$$"
+        output_dir="$tmpdir"
+    fi
+fi
 
-        case "$structure_info" in
-            single_dir:*)
-                # Archive has single root directory - extract to current directory
-                output_dir="."
-                root_dir_name="${structure_info#single_dir:}"
-                echo "Archive contains single root directory '$root_dir_name' - extracting to current directory"
-                ;;
-            single_file)
-                # Archive has single root file - create directory based on archive name
-                archive_basename=$(get_archive_basename "$input_file")
-                output_dir="./$archive_basename"
-                echo "Archive contains single file - extracting to '$output_dir/'"
-                ;;
-            multiple_entries)
-                # Archive has multiple root entries - create directory based on archive name
-                archive_basename=$(get_archive_basename "$input_file")
-                output_dir="./$archive_basename"
-                echo "Archive contains multiple root entries - extracting to '$output_dir/'"
-                ;;
-        esac
+# Clean up temp dir on failure or interruption (smart mode)
+if [ "$use_smart_mode" -eq 1 ]; then
+    trap 'rm -rf "$tmpdir"' EXIT INT TERM
+fi
+
+# Force overwrite check for non-smart modes
+if [ "$use_smart_mode" -eq 0 ]; then
+    if [ "$force_overwrite" -eq 0 ] && [ "$output_dir" != "." ] && [ -d "$output_dir" ]; then
+        echo "Error: '$output_dir' already exists. Use -f to overwrite."
+        exit 1
+    fi
+    if [ "$force_overwrite" -eq 1 ] && [ "$output_dir" != "." ] && [ -d "$output_dir" ]; then
+        rm -rf "$output_dir"
     fi
 fi
 
@@ -456,7 +416,9 @@ fi
 # Get file size for progress bar
 file_size=$(stat -f%z "$input_file" 2>/dev/null || stat -c%s "$input_file" 2>/dev/null || echo 0)
 
-if [ "$output_dir" = "." ]; then
+if [ "$use_smart_mode" -eq 1 ]; then
+    echo "Extracting '$input_file'..."
+elif [ "$output_dir" = "." ]; then
     echo "Extracting '$input_file' to current directory..."
 else
     echo "Extracting '$input_file' to '$output_dir/'..."
@@ -464,35 +426,54 @@ fi
 if [ "$verbose" -eq 1 ]; then
     echo "Verbose mode enabled - showing extracted files"
 fi
-if [ "$keep_structure" -eq 0 ]; then
-    echo "Flattened extraction enabled - directory structure will be removed"
-fi
 
 # Perform extraction
-if [ "$keep_structure" -eq 1 ]; then
-    # Normal extraction preserving directory structure
-    if [ "$file_size" -gt 0 ]; then
-        pv -s "$file_size" "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
-    else
-        # Fallback without file size
-        pv "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
-    fi
+if [ "$file_size" -gt 0 ]; then
+    pv -s "$file_size" "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
 else
-    # Flattened extraction - extract all files to target directory without subdirectories
-    if [ "$file_size" -gt 0 ]; then
-        pv -s "$file_size" "$input_file" | pigz -dkc | tar ${tar_options} --strip-components=999 -C "$output_dir" 2>/dev/null || \
-        pv -s "$file_size" "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir" --transform 's|.*/||'
-    else
-        # Fallback without file size
-        pv "$input_file" | pigz -dkc | tar ${tar_options} --strip-components=999 -C "$output_dir" 2>/dev/null || \
-        pv "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir" --transform 's|.*/||'
-    fi
+    pv "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
 fi
 
 extraction_status=$?
 
 if [ $extraction_status -eq 0 ]; then
-    if [ "$output_dir" = "." ]; then
+    if [ "$use_smart_mode" -eq 1 ]; then
+        entry_count=$(ls -1A "$tmpdir" | wc -l)
+        single_entry=$(ls -1A "$tmpdir" | head -1)
+
+        if [ "$entry_count" -eq 1 ] && [ -d "$tmpdir/$single_entry" ]; then
+            if [ -e "./$single_entry" ]; then
+                if [ "$force_overwrite" -eq 1 ]; then
+                    rm -rf "./$single_entry"
+                else
+                    rm -rf "$tmpdir"
+                    trap - EXIT INT TERM
+                    echo "Error: './$single_entry' already exists. Use -f to overwrite."
+                    exit 1
+                fi
+            fi
+            mv "$tmpdir/$single_entry" .
+            rmdir "$tmpdir"
+            final_output="$single_entry"
+        else
+            if [ -e "./$archive_basename" ]; then
+                if [ "$force_overwrite" -eq 1 ]; then
+                    rm -rf "./$archive_basename"
+                else
+                    rm -rf "$tmpdir"
+                    trap - EXIT INT TERM
+                    echo "Error: './$archive_basename' already exists. Use -f to overwrite."
+                    exit 1
+                fi
+            fi
+            mv "$tmpdir" "./$archive_basename"
+            final_output="$archive_basename"
+        fi
+
+        trap - EXIT INT TERM
+
+        echo "Extraction complete: ./$final_output/"
+    elif [ "$output_dir" = "." ]; then
         echo "Extraction complete: current directory"
     else
         echo "Extraction complete: $output_dir/"

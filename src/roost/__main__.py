@@ -5,15 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
 import sys
-from typing import (
-    TYPE_CHECKING,
-    Annotated,
-)
-
-
-if TYPE_CHECKING:
-    from roost.sudo import SudoManager
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -27,6 +21,7 @@ from rich.progress import (
 )
 from rich.table import Table
 
+from roost import __version__
 from roost.cli_helpers import (
     check_and_warn_path,
     validate_sudo_if_needed,
@@ -49,6 +44,7 @@ from roost.registry import (
     get_program,
     list_programs,
 )
+from roost.sudo import SudoManager
 from roost.sudo_requirement import SudoRequirement
 from roost.system import SystemLinker
 from roost.workflows import (
@@ -82,6 +78,11 @@ ForceFlag = Annotated[
 YesFlag = Annotated[
     bool,
     typer.Option("--yes", "-y", help="Skip confirmation prompt"),
+]
+
+NoDowngradeFlag = Annotated[
+    bool,
+    typer.Option("--no-downgrade", help="Skip programs where installed version is newer than latest available"),
 ]
 
 
@@ -208,6 +209,7 @@ def update_command(
     force: ForceFlag = False,
     yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
+    no_downgrade: NoDowngradeFlag = False,
 ) -> None:
     """
     Update already-installed program(s).
@@ -216,6 +218,7 @@ def update_command(
     Use --force to reinstall even if up to date.
     Use --yes/-y to skip confirmation prompt.
     Use --no-links to skip creating system links (no sudo needed).
+    Use --no-downgrade to skip programs where installed version is newer than latest.
     """
     if program is not None:
         # Update single program
@@ -231,6 +234,14 @@ def update_command(
             # Check if update is needed
             async def check_and_update() -> bool:
                 meta = await prog.get_metadata()
+                if meta.downgrade_available:
+                    if no_downgrade:
+                        console.print(
+                            f"[yellow]{prog.name} {meta.current_version} -> {meta.latest_version}"
+                            " (downgrade skipped)[/]"
+                        )
+                        return False
+                    return True
                 if not force and not meta.update_available:
                     console.print(f"[dim]{prog.name} is already up to date ({meta.current_version})[/]")
                     return False
@@ -249,7 +260,14 @@ def update_command(
                 sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
 
             success, attempted, _version = asyncio.run(
-                update_program(prog, console, force=force, sudo_mgr=sudo_mgr, create_links=not no_links)
+                update_program(
+                    prog,
+                    console,
+                    force=force,
+                    no_downgrade=no_downgrade,
+                    sudo_mgr=sudo_mgr,
+                    create_links=not no_links,
+                )
             )
             if not success and attempted:
                 raise typer.Exit(1)
@@ -301,7 +319,9 @@ def update_command(
                 if isinstance(meta, BaseException):
                     console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
                     continue
-                if force or meta.update_available:
+                if meta.downgrade_available and no_downgrade:
+                    continue
+                if force or meta.update_available or meta.downgrade_available:
                     to_update.append(prog)
             return to_update, metadata_list
 
@@ -328,6 +348,12 @@ def update_command(
                     prog.read_version_file(),
                     f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
                 )
+            elif meta.downgrade_available:
+                preview_table.add_row(
+                    prog.name,
+                    meta.current_version,
+                    f"[magenta]{meta.latest_version} (downgrade)[/]",
+                )
             else:
                 preview_table.add_row(
                     prog.name,
@@ -336,6 +362,17 @@ def update_command(
                 )
 
         console.print(preview_table)
+
+        # Show skipped downgrades when --no-downgrade is active
+        if no_downgrade:
+            for prog, meta in zip(installed, metadata_list, strict=True):
+                if isinstance(meta, BaseException):
+                    continue
+                if meta.downgrade_available:
+                    console.print(
+                        f"[yellow]Skipped {prog.name} {meta.current_version} -> {meta.latest_version} (downgrade)[/]"
+                    )
+
         console.print()
 
         # Confirmation prompt (unless --yes flag)
@@ -355,7 +392,14 @@ def update_command(
             sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
 
         asyncio.run(
-            update_programs(programs_to_update, console, force=force, sudo_mgr=sudo_mgr, create_links=not no_links)
+            update_programs(
+                programs_to_update,
+                console,
+                force=force,
+                no_downgrade=no_downgrade,
+                sudo_mgr=sudo_mgr,
+                create_links=not no_links,
+            )
         )
 
         # Warn about PATH for programs that don't require sudo
@@ -711,8 +755,6 @@ def info_command() -> None:
     Shows all configured paths, their sources (environment variable or default),
     tool version, Python version, and installation statistics.
     """
-    from roost import __version__
-
     console.print("\n[bold cyan]Roost Configuration[/bold cyan]\n")
 
     # Tool and system info
@@ -764,8 +806,6 @@ def info_command() -> None:
 
         # Disk usage
         if shutil.which("du"):
-            import subprocess
-
             try:
                 result = subprocess.run(
                     ["du", "-sh", str(config.install_dir)],

@@ -7,6 +7,11 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from roost.config import config
+from roost.path_utils import (
+    check_path_in_user_path_env,
+    requires_sudo,
+)
 from roost.sudo import SudoManager
 
 
@@ -66,9 +71,6 @@ def validate_sudo_if_needed(console: Console, skip_hint: str | None = None) -> S
     typer.Exit
         If sudo validation fails when needed.
     """
-    from roost.config import config
-    from roost.path_utils import requires_sudo
-
     # Check if any paths need sudo
     paths_to_check = [config.bin_dir, config.desktop_dir, config.man_dir]
 
@@ -89,9 +91,6 @@ def check_and_warn_path(console: Console) -> None:
     console : Console
         Rich console for output.
     """
-    from roost.config import config
-    from roost.path_utils import check_path_in_user_path_env
-
     # Only warn for default user-local path
     default_user_bin = Path.home() / ".local" / "bin"
     if config.bin_dir == default_user_bin and not check_path_in_user_path_env(config.bin_dir):

@@ -28,6 +28,7 @@ async def update_program(
     program: Program,
     console: Console,
     force: bool = False,
+    no_downgrade: bool = False,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
     batch: bool = False,
@@ -43,6 +44,8 @@ async def update_program(
         Rich console for output.
     force : bool
         Force reinstall even if up to date.
+    no_downgrade : bool
+        Skip programs where installed version is newer than latest available.
     sudo_mgr : SudoManager | None
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
@@ -60,7 +63,14 @@ async def update_program(
     try:
         meta = await program.get_metadata()
 
-        if not force and not meta.update_available:
+        if meta.downgrade_available and no_downgrade:
+            if not batch:
+                console.print(
+                    f"[yellow]{program.name} {meta.current_version} -> {meta.latest_version} (downgrade skipped)[/]"
+                )
+            return (False, False, "")
+
+        if not force and not meta.update_available and not meta.downgrade_available:
             if not batch:
                 console.print(f"[dim]{program.name} is already up to date ({meta.current_version})[/]")
             return (False, False, "")
@@ -84,6 +94,7 @@ async def update_programs(
     programs: list[Program],
     console: Console,
     force: bool = False,
+    no_downgrade: bool = False,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
 ) -> None:
@@ -98,6 +109,8 @@ async def update_programs(
         Rich console for output.
     force : bool
         Force reinstall even if up to date.
+    no_downgrade : bool
+        Skip programs where installed version is newer than latest available.
     sudo_mgr : SudoManager | None
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
@@ -135,7 +148,9 @@ async def update_programs(
         if isinstance(meta, BaseException):
             console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
             continue
-        if meta.update_available or force:
+        if meta.downgrade_available and no_downgrade:
+            continue
+        if meta.update_available or meta.downgrade_available or force:
             to_update.append(prog)
 
     if len(to_update) == 0:
@@ -160,7 +175,13 @@ async def update_programs(
         async def update_one(prog: Program, progress: Progress, task: TaskID) -> None:
             async with semaphore:
                 success, attempted, version = await update_program(
-                    prog, console, force=force, sudo_mgr=sudo_mgr, create_links=create_links, batch=True
+                    prog,
+                    console,
+                    force=force,
+                    no_downgrade=no_downgrade,
+                    sudo_mgr=sudo_mgr,
+                    create_links=create_links,
+                    batch=True,
                 )
                 if success:
                     upgraded.append((prog.name, version))
