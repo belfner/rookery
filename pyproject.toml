@@ -6,6 +6,7 @@ readme = "README.md"
 authors = [
     { name = "belfner", email = "belfner@belfner.com" }
 ]
+license = "MIT"
 requires-python = ">=3.12"
 
 [project.urls]
