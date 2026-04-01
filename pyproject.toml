@@ -7,6 +7,11 @@ authors = [
     { name = "belfner", email = "belfner@belfner.com" }
 ]
 requires-python = ">=3.12"
+
+[project.urls]
+Homepage = "https://github.com/belfner/roost"
+Repository = "https://github.com/belfner/roost"
+
 dependencies = [
     "typer>=0.20.0",
     "rich>=13.0.0",
