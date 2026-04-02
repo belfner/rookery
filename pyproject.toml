@@ -1,6 +1,6 @@
 [project]
 name = "roost"
-version = "0.3.0"
+version = "0.4.0"
 description = "Roost - package manager for third-party development tools"
 readme = "README.md"
 authors = [
