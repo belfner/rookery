@@ -12,7 +12,7 @@ upload-test:
 	uv run twine upload --repository testpypi dist/* --verbose
 
 upload:
-	uv run twine upload dist/*
+	uv run twine upload dist/* --verbose
 
 install:
 	uv pip install -e .
