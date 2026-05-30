@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import httpx
+import niquests
 
 from roost.fetching import Asset
 from roost.github_program import GitHubProgram
@@ -73,11 +73,11 @@ class YaziProgram(GitHubProgram):
             If the commit SHA cannot be parsed from the nix file.
         """
         url = f"https://raw.githubusercontent.com/sxyazi/yazi/v{version}/nix/yazi-unwrapped.nix"
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with niquests.AsyncSession(timeout=30.0) as client:
             response = await client.get(url)
             response.raise_for_status()
 
-        content = response.text
+        content = response.text or ""
 
         man_src_match = re.search(r"man_src\s*=\s*fetchFromGitHub\s*\{([^}]+)\}", content)
         if man_src_match is None:

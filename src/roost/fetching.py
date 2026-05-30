@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
+import niquests
 from rich.progress import (
     Progress,
     TaskID,
@@ -111,7 +111,7 @@ async def download_file(
     dest: Path,
     progress: Progress,
     task_id: TaskID,
-    client: httpx.AsyncClient | None = None,
+    client: niquests.AsyncSession | None = None,
 ) -> None:
     """
     Download file from URL with progress tracking.
@@ -126,29 +126,32 @@ async def download_file(
         Rich progress bar instance.
     task_id : TaskID
         Task ID for progress updates.
-    client : httpx.AsyncClient | None
+    client : niquests.AsyncSession | None
         Optional existing client, creates new one if None.
     """
     should_close = client is None
     if client is None:
-        client = httpx.AsyncClient(follow_redirects=True, timeout=300.0)
+        client = niquests.AsyncSession(timeout=300.0)
 
+    response = None
     try:
-        async with client.stream("GET", url) as response:
-            response.raise_for_status()
-            total = int(response.headers.get("content-length", 0))
-            progress.update(task_id, total=total)
+        response = await client.get(url, stream=True)
+        response.raise_for_status()
+        total = int(response.headers.get("content-length", 0))
+        progress.update(task_id, total=total)
 
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            with dest.open("wb") as f:
-                downloaded = 0
-                async for chunk in response.aiter_bytes(chunk_size=8192):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    progress.update(task_id, completed=downloaded)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        with dest.open("wb") as f:
+            downloaded = 0
+            async for chunk in await response.iter_content(chunk_size=8192):
+                f.write(chunk)
+                downloaded += len(chunk)
+                progress.update(task_id, completed=downloaded)
     finally:
+        if response is not None:
+            await response.close()
         if should_close:
-            await client.aclose()
+            await client.close()
 
 
 class GitHubFetcher:
@@ -171,10 +174,9 @@ class GitHubFetcher:
         if self._token is not None:
             headers["Authorization"] = f"Bearer {self._token}"
 
-        self.client = httpx.AsyncClient(
+        self.client = niquests.AsyncSession(
             headers=headers,
             timeout=30.0,
-            follow_redirects=True,
         )
 
     async def get_latest_version_via_redirect(self, repo: str) -> str:
@@ -196,16 +198,16 @@ class GitHubFetcher:
 
         Raises
         ------
-        httpx.HTTPError
+        niquests.HTTPError
             If request fails.
         ValueError
             If version cannot be extracted from redirect.
         """
         url = f"https://github.com/{repo}/releases/latest"
-        response = await self.client.head(url, follow_redirects=False)
+        response = await self.client.head(url, allow_redirects=False)
 
         if response.status_code in (301, 302, 303, 307, 308):
-            location: str = response.headers.get("location", "")
+            location = str(response.headers.get("location", ""))
             if "/tag/" in location:
                 tag: str = location.split("/tag/")[-1]
                 return tag.lstrip("v")
@@ -229,7 +231,7 @@ class GitHubFetcher:
 
         Raises
         ------
-        httpx.HTTPError
+        niquests.HTTPError
             If request fails.
         """
         release = await self.get_latest_release(repo)
@@ -251,7 +253,7 @@ class GitHubFetcher:
 
         Raises
         ------
-        httpx.HTTPError
+        niquests.HTTPError
             If request fails.
         GitHubRateLimitError
             If GitHub API rate limit is exceeded.
@@ -263,7 +265,7 @@ class GitHubFetcher:
         if response.status_code == 403:
             # GitHub returns 403 for rate limit exceeded
             # Check if it's actually a rate limit error vs other 403 (like DMCA takedown)
-            error_message = response.text.lower()
+            error_message = (response.text or "").lower()
             if "rate limit" in error_message or "api rate limit exceeded" in error_message:
                 raise GitHubRateLimitError(repo, authenticated=self._token is not None)
 
@@ -302,7 +304,7 @@ class GitHubFetcher:
 
         Raises
         ------
-        httpx.HTTPError
+        niquests.HTTPError
             If request fails.
         GitHubRateLimitError
             If GitHub API rate limit is exceeded.
@@ -311,7 +313,7 @@ class GitHubFetcher:
         response = await self.client.get(url)
 
         if response.status_code == 403:
-            error_message = response.text.lower()
+            error_message = (response.text or "").lower()
             if "rate limit" in error_message or "api rate limit exceeded" in error_message:
                 raise GitHubRateLimitError(repo, authenticated=self._token is not None)
 
@@ -329,7 +331,7 @@ class GitHubFetcher:
 
     async def close(self) -> None:
         """Close HTTP client."""
-        await self.client.aclose()
+        await self.client.close()
 
     async def __aenter__(self) -> GitHubFetcher:
         """Async context manager entry."""
@@ -350,9 +352,8 @@ class DirectFetcher:
 
     def __init__(self) -> None:
         """Initialize direct fetcher with HTTP client."""
-        self.client = httpx.AsyncClient(
+        self.client = niquests.AsyncSession(
             timeout=30.0,
-            follow_redirects=True,
         )
 
     async def fetch_url_content(self, url: str) -> str:
@@ -373,12 +374,12 @@ class DirectFetcher:
 
         Raises
         ------
-        httpx.HTTPError
+        niquests.HTTPError
             If request fails.
         """
         response = await self.client.get(url)
         response.raise_for_status()
-        return response.text
+        return response.text or ""
 
     async def head_request(self, url: str) -> int:
         """
@@ -396,13 +397,13 @@ class DirectFetcher:
         """
         try:
             response = await self.client.head(url)
-            return response.status_code
-        except httpx.HTTPError:
+            return response.status_code or 0
+        except niquests.HTTPError:
             return 404
 
     async def close(self) -> None:
         """Close HTTP client."""
-        await self.client.aclose()
+        await self.client.close()
 
     async def __aenter__(self) -> DirectFetcher:
         """Async context manager entry."""

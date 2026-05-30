@@ -13,7 +13,7 @@ from dataclasses import (
 )
 from pathlib import Path
 
-import httpx
+import niquests
 
 from roost.installer import Installer
 
@@ -79,9 +79,10 @@ class DownloadArchive(InstallOperation):
         filename = self.url.split("/")[-1]
         download_path = context.installer.download_dir / filename
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+        async with niquests.AsyncSession(timeout=300.0) as client:
             response = await client.get(self.url)
             response.raise_for_status()
+            assert response.content is not None
             download_path.write_bytes(response.content)
 
         context.downloads[self.operation_id] = download_path
@@ -239,9 +240,10 @@ class DownloadFile(InstallOperation):
         dest = context.install_dir / self.dest_path
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=300.0) as client:
+        async with niquests.AsyncSession(timeout=300.0) as client:
             response = await client.get(self.url)
             response.raise_for_status()
+            assert response.content is not None
             dest.write_bytes(response.content)
 
 
