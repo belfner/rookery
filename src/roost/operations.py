@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+import subprocess
+import tempfile
 from abc import (
     ABC,
     abstractmethod,
@@ -367,3 +369,87 @@ class InstallDebSystemWide(InstallOperation):
             deb_path=archive_path,
             package_name=self.package_name,
         )
+
+
+class BuildFromSource(InstallOperation):
+    """Compile a program from a downloaded source archive and install its build artifacts."""
+
+    def __init__(
+        self,
+        archive_id: str,
+        build_command: list[str],
+        artifacts: dict[str, str],
+        source_subdir: str | None = None,
+    ) -> None:
+        """
+        Initialize build-from-source operation.
+
+        Parameters
+        ----------
+        archive_id : str
+            ID of a previously downloaded source archive.
+        build_command : list[str]
+            Build command in argv form, run from the source root (e.g. ["make"]).
+        artifacts : dict[str, str]
+            Mapping of glob pattern (relative to the source root) to destination path
+            (relative to install_dir) for each build output to install. The first match
+            for each pattern is copied, preserving file mode.
+        source_subdir : str | None
+            Subdirectory within the extracted archive that holds the source root. When None,
+            a single top-level directory is auto-detected, falling back to the archive root,
+            by default None.
+        """
+        self.archive_id = archive_id
+        self.build_command = build_command
+        self.artifacts = artifacts
+        self.source_subdir = source_subdir
+
+    async def execute(self, context: InstallContext) -> None:
+        """
+        Build the program from source and copy artifacts into the install directory.
+
+        The archive is extracted to a temporary directory, the build command runs in the
+        source root, and each declared artifact is copied into install_dir.
+
+        Parameters
+        ----------
+        context : InstallContext
+            Installation context.
+
+        Raises
+        ------
+        RuntimeError
+            If the build tool is unavailable, the build fails, or an artifact is missing.
+        """
+        archive_path = context.downloads[self.archive_id]
+
+        tool = self.build_command[0]
+        if shutil.which(tool) is None:
+            raise RuntimeError(f"Build tool '{tool}' not found on PATH; cannot build from source")
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            context.installer.extract_archive(archive_path, tmp_path)
+
+            if self.source_subdir is not None:
+                source_root = tmp_path / self.source_subdir
+            else:
+                top_level_dirs = [item for item in tmp_path.iterdir() if item.is_dir()]
+                source_root = top_level_dirs[0] if len(top_level_dirs) == 1 else tmp_path
+
+            result = subprocess.run(
+                self.build_command,
+                cwd=source_root,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                raise RuntimeError(f"Build command {self.build_command} failed:\n{result.stderr}")
+
+            for pattern, dest_rel in self.artifacts.items():
+                matches = sorted(source_root.glob(pattern))
+                if len(matches) == 0:
+                    raise RuntimeError(f"Build artifact '{pattern}' not found after build")
+                dest = context.install_dir / dest_rel
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(matches[0], dest)
