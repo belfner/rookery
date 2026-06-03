@@ -5,17 +5,22 @@ from __future__ import annotations
 from roost.shell_script_program import ShellScriptProgram
 
 
-FTARGZ_SCRIPT = r"""#!/bin/sh
+FTARGZ_SCRIPT = r"""#!/bin/bash
+set -o pipefail
+
 # Default compression level
 compression_level=9
 force_overwrite=false
+# Thread count for pigz (empty -> auto-detect after option parsing)
+procs=""
 
 # Function to show help
 show_help() {
-    echo "Usage: $0 [-l level] [-f] input_file [output_file]"
-    echo "  -l level    Specify the compression level (default is 9). Valid values are integers 0-9."
-    echo "  -f          Force overwrite if output file exists (skip confirmation prompt)"
-    echo "  -h, --help  Show this help message and exit"
+    echo "Usage: $0 [-l level] [-p procs] [-f] input_file [output_file]"
+    echo "  -l level        Specify the compression level (default is 9). Valid values are integers 0-9."
+    echo "  -p, --procs n   Number of compression threads for pigz (default max(cores-5, 5))."
+    echo "  -f              Force overwrite if output file exists (skip confirmation prompt)"
+    echo "  -h, --help      Show this help message and exit"
     echo "If only the input_file is provided, the output will be named '<basename>.tar.gz' in the current directory."
     echo "If an output_file is provided, it will be used as the name for the compressed output in the current directory."
     echo ""
@@ -70,6 +75,18 @@ check_pv() {
     command -v pv >/dev/null 2>&1
 }
 
+# Check if a command is available
+check_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Detect online CPU count, with portable fallbacks
+detect_threads() {
+    nproc 2>/dev/null \
+        || getconf _NPROCESSORS_ONLN 2>/dev/null \
+        || echo 4
+}
+
 # Parse command-line options
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -79,6 +96,16 @@ while [ "$#" -gt 0 ]; do
                 shift 2
             else
                 echo "Error: Argument for $1 is missing or not a number" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        -p|--procs)  # Compression thread count
+            if [ -n "$2" ] && [ "$2" -eq "$2" ] 2>/dev/null && [ "$2" -ge 1 ]; then
+                procs="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 must be a positive integer" >&2
                 show_help
                 exit 1
             fi
@@ -167,6 +194,20 @@ else
     echo "Note: 'pv' is not installed. Progress display will be unavailable."
 fi
 
+# Select compressor: prefer pigz (parallel), fall back to gzip
+if check_cmd pigz; then
+    if [ -z "$procs" ]; then
+        cores=$(detect_threads)
+        procs=$(( cores - 5 ))
+        [ "$procs" -lt 5 ] && procs=5
+    fi
+    compress() { pigz -k -"$compression_level" -p"$procs"; }
+    echo "Using pigz with $procs thread(s)."
+else
+    compress() { gzip -"$compression_level" -c; }
+    echo "Note: 'pigz' is not installed. Falling back to gzip (single-threaded)."
+fi
+
 # Create the compressed archive
 if [ -d "$input_path" ]; then
     # For directories, we need to change to the parent directory and tar the basename
@@ -176,20 +217,20 @@ if [ -d "$input_path" ]; then
     if [ "$use_pv" = true ]; then
         (cd "$parent_dir" && tar cf - "$target_name") | \
         pv -s "$original_size" | \
-        pigz -k -$compression_level -p15 > "$output_path"
+        compress > "$output_path"
     else
         (cd "$parent_dir" && tar cf - "$target_name") | \
-        pigz -k -$compression_level -p15 > "$output_path"
+        compress > "$output_path"
     fi
 else
     # For files, tar can handle the full path directly
     if [ "$use_pv" = true ]; then
         tar cf - "$input_path" | \
         pv -s "$original_size" | \
-        pigz -k -$compression_level -p15 > "$output_path"
+        compress > "$output_path"
     else
         tar cf - "$input_path" | \
-        pigz -k -$compression_level -p15 > "$output_path"
+        compress > "$output_path"
     fi
 fi
 
@@ -218,22 +259,27 @@ else
 fi
 """
 
-FUNTARGZ_SCRIPT = r"""#!/bin/sh
+FUNTARGZ_SCRIPT = r"""#!/bin/bash
+set -o pipefail
+
 # Default behavior flags
 verbose=0
 extract_to_current=0
 safe_mode=0
 force_overwrite=0
+# Parent directory for the temporary extraction workspace (smart mode)
+tmp_parent="/tmp"
 
 # Function to show help
 show_help() {
-    echo "Usage: $0 [-d dir] [-c] [-f] [-s] [-v] [-h|--help] input_file.tar.gz"
-    echo "  -d dir      Extract to specified directory (overrides smart behavior)"
-    echo "  -c          Extract to current directory (overrides smart behavior)"
-    echo "  -f, --force Force overwrite if target already exists"
-    echo "  -s          Safe mode: always extract to directory named after archive (no structure checking)"
-    echo "  -v          Verbose output (show extracted files)"
-    echo "  -h, --help  Show this help message and exit"
+    echo "Usage: $0 [-d dir] [-c] [-f] [-s] [-v] [--tmpdir dir] [-h|--help] input_file.tar.gz"
+    echo "  -d dir        Extract to specified directory (overrides smart behavior)"
+    echo "  -c            Extract to current directory (overrides smart behavior)"
+    echo "  -f, --force   Force overwrite if target already exists"
+    echo "  -s            Safe mode: always extract to directory named after archive (no structure checking)"
+    echo "  -v            Verbose output (show extracted files)"
+    echo "  --tmpdir dir  Parent directory for the temporary workspace in smart mode (default /tmp)"
+    echo "  -h, --help    Show this help message and exit"
     echo ""
     echo "Smart extraction behavior (default):"
     echo "  - If archive contains a single root directory: extract to current directory"
@@ -305,6 +351,19 @@ ensure_output_dir() {
     fi
 }
 
+# Check if a command is available
+check_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# Exit with an error if a required command is missing
+require_cmd() {
+    if ! check_cmd "$1"; then
+        echo "Error: '$1' is required but not found in PATH." >&2
+        exit 1
+    fi
+}
+
 # Parse command-line options
 output_dir=""
 while [ "$#" -gt 0 ]; do
@@ -312,6 +371,16 @@ while [ "$#" -gt 0 ]; do
         -d)  # Output directory
             if [ -n "$2" ]; then
                 output_dir="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                show_help
+                exit 1
+            fi
+            ;;
+        --tmpdir)  # Parent dir for smart-mode temp workspace
+            if [ -n "$2" ]; then
+                tmp_parent="$2"
                 shift 2
             else
                 echo "Error: Argument for $1 is missing" >&2
@@ -380,10 +449,15 @@ if [ -z "$output_dir" ]; then
         output_dir="./$archive_basename"
         echo "Safe mode: extracting to '$output_dir/'"
     else
-        # Smart mode: extract to temp dir, inspect filesystem after
+        # Smart mode: extract to temp dir, inspect filesystem after.
+        # The workspace lives under tmp_parent (default /tmp); the final
+        # result is moved into the current directory once structure is known.
         use_smart_mode=1
         archive_basename=$(get_archive_basename "$input_file")
-        tmpdir=".tmp-${archive_basename}-$$"
+        tmpdir=$(mktemp -d "${tmp_parent}/.tmp-${archive_basename}-XXXXXX") || {
+            echo "Error: Failed to create temporary workspace under '$tmp_parent'." >&2
+            exit 1
+        }
         output_dir="$tmpdir"
     fi
 fi
@@ -413,6 +487,15 @@ if [ "$verbose" -eq 1 ]; then
     tar_options="${tar_options}v"
 fi
 
+# Ensure tar is present; select decompressor (prefer pigz, fall back to gzip)
+require_cmd tar
+if check_cmd pigz; then
+    decompress() { pigz -dkc; }
+else
+    decompress() { gzip -dc; }
+    echo "Note: 'pigz' is not installed. Falling back to gzip."
+fi
+
 # Get file size for progress bar
 file_size=$(stat -f%z "$input_file" 2>/dev/null || stat -c%s "$input_file" 2>/dev/null || echo 0)
 
@@ -427,11 +510,15 @@ if [ "$verbose" -eq 1 ]; then
     echo "Verbose mode enabled - showing extracted files"
 fi
 
-# Perform extraction
-if [ "$file_size" -gt 0 ]; then
-    pv -s "$file_size" "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
+# Perform extraction (use pv for a progress bar when available)
+if check_cmd pv; then
+    if [ "$file_size" -gt 0 ]; then
+        pv -s "$file_size" "$input_file" | decompress | tar ${tar_options} -C "$output_dir"
+    else
+        pv "$input_file" | decompress | tar ${tar_options} -C "$output_dir"
+    fi
 else
-    pv "$input_file" | pigz -dkc | tar ${tar_options} -C "$output_dir"
+    decompress < "$input_file" | tar ${tar_options} -C "$output_dir"
 fi
 
 extraction_status=$?
