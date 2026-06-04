@@ -474,7 +474,10 @@ if [ "$use_smart_mode" -eq 0 ]; then
         exit 1
     fi
     if [ "$force_overwrite" -eq 1 ] && [ "$output_dir" != "." ] && [ -d "$output_dir" ]; then
-        rm -rf "$output_dir"
+        if ! rm -rf "$output_dir"; then
+            echo "Error: Failed to remove existing '$output_dir' for overwrite." >&2
+            exit 1
+        fi
     fi
 fi
 
@@ -531,7 +534,12 @@ if [ $extraction_status -eq 0 ]; then
         if [ "$entry_count" -eq 1 ] && [ -d "$tmpdir/$single_entry" ]; then
             if [ -e "./$single_entry" ]; then
                 if [ "$force_overwrite" -eq 1 ]; then
-                    rm -rf "./$single_entry"
+                    if ! rm -rf "./$single_entry"; then
+                        rm -rf "$tmpdir"
+                        trap - EXIT INT TERM
+                        echo "Error: Failed to remove existing './$single_entry' for overwrite." >&2
+                        exit 1
+                    fi
                 else
                     rm -rf "$tmpdir"
                     trap - EXIT INT TERM
@@ -539,13 +547,23 @@ if [ $extraction_status -eq 0 ]; then
                     exit 1
                 fi
             fi
-            mv "$tmpdir/$single_entry" .
-            rmdir "$tmpdir"
+            if ! mv "$tmpdir/$single_entry" .; then
+                rm -rf "$tmpdir"
+                trap - EXIT INT TERM
+                echo "Error: Failed to move extracted result into the current directory." >&2
+                exit 1
+            fi
+            rmdir "$tmpdir" 2>/dev/null || rm -rf "$tmpdir"
             final_output="$single_entry"
         else
             if [ -e "./$archive_basename" ]; then
                 if [ "$force_overwrite" -eq 1 ]; then
-                    rm -rf "./$archive_basename"
+                    if ! rm -rf "./$archive_basename"; then
+                        rm -rf "$tmpdir"
+                        trap - EXIT INT TERM
+                        echo "Error: Failed to remove existing './$archive_basename' for overwrite." >&2
+                        exit 1
+                    fi
                 else
                     rm -rf "$tmpdir"
                     trap - EXIT INT TERM
@@ -553,7 +571,12 @@ if [ $extraction_status -eq 0 ]; then
                     exit 1
                 fi
             fi
-            mv "$tmpdir" "./$archive_basename"
+            if ! mv "$tmpdir" "./$archive_basename"; then
+                rm -rf "$tmpdir"
+                trap - EXIT INT TERM
+                echo "Error: Failed to move extracted result to './$archive_basename'." >&2
+                exit 1
+            fi
             final_output="$archive_basename"
         fi
 
