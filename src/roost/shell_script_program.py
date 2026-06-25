@@ -7,14 +7,16 @@ from pathlib import Path
 from roost.operations import InstallOperation
 from roost.program import Program
 from roost.sudo_requirement import SudoRequirement
+from roost.version_sources import StaticVersionSource
 
 
 class ShellScriptProgram(Program):
     """
     Base class for programs that bundle shell scripts inline.
 
-    Shell script programs have no external version source - they use a static
-    "local" version and embed script content directly in the class definition.
+    Shell script programs use a static "script" version and embed script content
+    directly in the class definition. A StaticVersionSource exposes that single
+    bundled version and rejects exact historical selection.
 
     Attributes
     ----------
@@ -28,6 +30,11 @@ class ShellScriptProgram(Program):
     sudo_requirement: SudoRequirement = SudoRequirement.NOT_REQUIRED
     scripts: dict[str, str] = {}
     man_pages: dict[str, str] = {}
+
+    def __init__(self) -> None:
+        """Initialize shell-script program with a static version source."""
+        super().__init__()
+        self.version_source = StaticVersionSource(version_label="script")
 
     async def get_latest_version(self) -> str:
         """

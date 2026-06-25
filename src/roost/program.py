@@ -15,14 +15,27 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from roost.config import config
+from roost.install_resolution import get_active_resolution
 from roost.installer import Installer
 from roost.operations import (
     InstallContext,
     InstallOperation,
 )
+from roost.state import (
+    InstalledState,
+    ProgramState,
+    read_program_state,
+    utc_now_iso,
+    write_program_state_atomic,
+)
 from roost.sudo import SudoManager
 from roost.sudo_requirement import SudoRequirement
 from roost.version import compare_versions
+from roost.version_sources import (
+    AvailableVersion,
+    VersionResolution,
+    VersionSource,
+)
 
 
 if TYPE_CHECKING:
@@ -38,6 +51,9 @@ class ProgramMetadata:
     update_available: bool
     downgrade_available: bool
     name: str
+    pinned: bool = False
+    pin_version: str | None = None
+    blocked_by_pin: bool = False
 
 
 class Program(ABC):
@@ -68,6 +84,9 @@ class Program(ABC):
     binary_files: list[Path] = []
     man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None
+
+    # Version source for listing/resolving versions. None means legacy (latest-only) behavior.
+    version_source: VersionSource | None = None
 
     def __init__(self) -> None:
         """
@@ -229,6 +248,9 @@ class Program(ABC):
             # Phase 4: Write version file
             self.write_version_file(version)
 
+            # Phase 5: Record structured state (resolved identity), preserving any existing pin
+            self._record_installed_state(version)
+
         except Exception:
             # Installation failed - clean up partial installation
             if self.install_dir.exists() and not self.version_file.exists():
@@ -387,6 +409,137 @@ class Program(ABC):
         except Exception:
             return LinkStatus.ERROR
 
+    async def get_available_versions(
+        self,
+        *,
+        limit: int | None = None,
+        include_prerelease: bool = False,
+    ) -> list[AvailableVersion]:
+        """
+        List versions available for this program.
+
+        Programs without a version source degrade to a single legacy entry built from
+        `get_latest_version()`.
+
+        Parameters
+        ----------
+        limit : int | None
+            Maximum number of versions to return, by default None.
+        include_prerelease : bool
+            Whether to include prereleases, by default False.
+
+        Returns
+        -------
+        list[AvailableVersion]
+            Available versions, newest first.
+        """
+        if self.version_source is None:
+            latest = await self.get_latest_version()
+            return [AvailableVersion(version=latest, upstream_id=latest, source="legacy")]
+        return await self.version_source.list_versions(limit=limit, include_prerelease=include_prerelease)
+
+    async def resolve_version(self, requested: str | None) -> VersionResolution:
+        """
+        Resolve a user selector to a concrete version identity.
+
+        Programs without a version source resolve "latest" via `get_latest_version()` and
+        treat any other selector as a literal version (legacy behavior).
+
+        Parameters
+        ----------
+        requested : str | None
+            Selector such as "latest" or "0.10.4"; None means "latest".
+
+        Returns
+        -------
+        VersionResolution
+            Resolved version identity.
+        """
+        spec = requested if requested is not None else "latest"
+        if self.version_source is None:
+            version = await self.get_latest_version() if spec == "latest" else spec
+            return VersionResolution(requested=spec, version=version, upstream_id=version, source="legacy")
+        return await self.version_source.resolve(spec)
+
+    def supports_exact_versions(self) -> bool:
+        """
+        Report whether this program can install an exact historical version.
+
+        Returns
+        -------
+        bool
+            True when a version source is attached and supports exact installs.
+        """
+        return self.version_source is not None and self.version_source.supports_exact
+
+    def pin_warning(self) -> str | None:
+        """
+        Return an advisory shown when pinning this program, if any.
+
+        Returns
+        -------
+        str | None
+            Advisory text, or None when no advisory applies.
+        """
+        return None
+
+    def read_state(self) -> ProgramState:
+        """
+        Read structured install/pin state, synthesizing legacy state when needed.
+
+        Returns
+        -------
+        ProgramState
+            The program's structured state.
+        """
+        return read_program_state(self)
+
+    def write_state(self, state: ProgramState) -> None:
+        """
+        Persist structured install/pin state atomically.
+
+        Parameters
+        ----------
+        state : ProgramState
+            State to persist.
+        """
+        write_program_state_atomic(self, state)
+
+    def _record_installed_state(self, version: str) -> None:
+        """
+        Record installed-version identity after a successful install, preserving any pin.
+
+        Uses the active install resolution when it matches the installed version, otherwise
+        synthesizes an identity from the version source name (or legacy).
+
+        Parameters
+        ----------
+        version : str
+            Version just installed.
+        """
+        resolution = get_active_resolution()
+        state = self.read_state()
+        state.program = self.name
+        if resolution is not None and resolution.version == version:
+            state.installed = InstalledState(
+                version=version,
+                requested=resolution.requested,
+                source=resolution.source,
+                upstream_id=resolution.upstream_id,
+                installed_at=utc_now_iso(),
+                metadata=dict(resolution.metadata),
+            )
+        else:
+            source = self.version_source.name if self.version_source is not None else "legacy"
+            state.installed = InstalledState(
+                version=version,
+                requested="latest",
+                source=source,
+                upstream_id=version,
+                installed_at=utc_now_iso(),
+            )
+        self.write_state(state)
+
     def read_version_file(self) -> str:
         """Read version from .version file."""
         if self.version_file.exists():
@@ -412,10 +565,18 @@ class Program(ABC):
         update_available = compare_versions(latest, current) > 0 and current != "0.0.0"
         downgrade_available = compare_versions(latest, current) < 0 and current != "0.0.0"
 
+        state = self.read_state()
+        pinned = state.is_pinned
+        pin_version = state.pin.version if (pinned and state.pin is not None) else None
+        blocked_by_pin = pinned and update_available
+
         return ProgramMetadata(
             current_version=current,
             latest_version=latest,
             update_available=update_available,
             downgrade_available=downgrade_available,
             name=self.name,
+            pinned=pinned,
+            pin_version=pin_version,
+            blocked_by_pin=blocked_by_pin,
         )

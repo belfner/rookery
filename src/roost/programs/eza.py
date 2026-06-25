@@ -66,7 +66,8 @@ class EzaProgram(GitHubProgram):
             self._select_asset,
         )
 
-        man_page_url = f"https://github.com/{self.github_repo}/releases/download/v{version}/man-{version}.tar.gz"
+        tag = self.upstream_tag_for(version)
+        man_page_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/man-{version}.tar.gz"
 
         return [
             DownloadArchive("eza", asset_url),

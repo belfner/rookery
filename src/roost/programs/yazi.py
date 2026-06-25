@@ -30,6 +30,8 @@ class YaziProgram(GitHubProgram):
     github_repo = "sxyazi/yazi"
     binary_files = [Path("yazi"), Path("ya")]
     man_page_repo = "yazi-rs/manpages"
+    # Exact install also needs the version-matched manpage commit; deferred to v2.
+    github_supports_exact = False
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """

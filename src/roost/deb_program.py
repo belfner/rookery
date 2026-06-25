@@ -48,6 +48,21 @@ class DebProgram(GitHubProgram):
         if not self.deb_package_name:
             raise ValueError(f"{self.__class__.__name__} must define deb_package_name")
 
+    def pin_warning(self) -> str | None:
+        """
+        Advise that roost pins hold `roost update` while apt remains independent.
+
+        Returns
+        -------
+        str | None
+            Advisory text directing the user to apt-mark for a system-level hold.
+        """
+        return (
+            f"{self.name} is a system package. A roost pin holds `roost update`; "
+            f"`apt upgrade` can still move it. Run `sudo apt-mark hold {self.deb_package_name}` "
+            "for a system-level hold."
+        )
+
     async def initialize(self, version: str) -> None:
         """
         Initialize installation directory for metadata storage.

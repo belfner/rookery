@@ -16,6 +16,7 @@ from roost.operations import (
 )
 from roost.program import Program
 from roost.sudo_requirement import SudoRequirement
+from roost.version_sources import GitHubReleaseSource
 
 
 class StorageExplorerProgram(Program):
@@ -30,6 +31,7 @@ class StorageExplorerProgram(Program):
         """Initialize Azure Storage Explorer program."""
         super().__init__()
         self.github_repo = "microsoft/AzureStorageExplorer"
+        self.version_source = GitHubReleaseSource(github_repo=self.github_repo)
 
     async def get_latest_version(self) -> str:
         """

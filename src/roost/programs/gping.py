@@ -24,6 +24,9 @@ class GpingProgram(GitHubProgram):
     # Declarative file locations
     program_name = "gping"
     github_repo = "orf/gping"
+    # gping tags look like "gping-v1.20.1"
+    github_tag_templates = ("gping-v{version}", "gping-{version}")
+    github_tag_strip_prefixes = ("gping-v", "gping-", "v")
     binary_files = [Path("gping")]
     man_page_files = {"man1": Path("gping.1")}
 

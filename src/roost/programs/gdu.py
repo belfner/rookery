@@ -63,7 +63,8 @@ class GduProgram(GitHubProgram):
             self._select_asset,
         )
 
-        man_page_url = f"https://github.com/{self.github_repo}/releases/download/v{version}/gdu.1.tgz"
+        tag = self.upstream_tag_for(version)
+        man_page_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/gdu.1.tgz"
 
         return [
             DownloadArchive("gdu", asset_url),

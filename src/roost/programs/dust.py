@@ -66,8 +66,9 @@ class DustProgram(GitHubProgram):
             self._select_asset,
         )
 
-        # Source archive URL for man page
-        source_url = f"https://github.com/bootandy/dust/archive/refs/tags/v{version}.tar.gz"
+        # Source archive URL for man page, keyed by the resolved release tag
+        tag = self.upstream_tag_for(version)
+        source_url = f"https://github.com/bootandy/dust/archive/refs/tags/{tag}.tar.gz"
 
         return [
             # Download and extract binary
