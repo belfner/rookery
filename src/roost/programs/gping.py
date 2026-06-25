@@ -86,6 +86,7 @@ class GpingProgram(GitHubProgram):
             self.github_repo,
             version,
             self._select_asset,
+            tag_candidates=[f"gping-v{version}", f"gping-{version}"],
         )
 
         return [

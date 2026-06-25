@@ -23,6 +23,7 @@ import niquests
 from roost.fetching import (
     GitHubFetcher,
     Release,
+    is_not_found_error,
 )
 
 
@@ -264,8 +265,10 @@ class GitHubReleaseSource:
         for candidate in self.version_to_tag_candidates(version):
             try:
                 return await fetcher.get_release_by_tag(self.github_repo, candidate)
-            except niquests.HTTPError:
-                continue
+            except niquests.HTTPError as error:
+                if is_not_found_error(error):
+                    continue
+                raise
         raise ValueError(f"No GitHub release found for {self.github_repo} version {version}")
 
 

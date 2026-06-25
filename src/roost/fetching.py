@@ -77,6 +77,29 @@ class Release:
     prerelease: bool = False
 
 
+def is_not_found_error(error: niquests.HTTPError) -> bool:
+    """
+    Return True if an HTTPError represents a 404 Not Found response.
+
+    Used to distinguish a missing tag (try the next candidate) from genuine HTTP
+    failures (access errors, 5xx) that should propagate.
+
+    Parameters
+    ----------
+    error : niquests.HTTPError
+        The raised HTTP error.
+
+    Returns
+    -------
+    bool
+        True only when the error carries a 404 response.
+    """
+    response = getattr(error, "response", None)
+    if response is None:
+        return False
+    return getattr(response, "status_code", None) == 404
+
+
 class GitHubRateLimitError(Exception):
     """
     Exception raised when GitHub API rate limit is exceeded.
