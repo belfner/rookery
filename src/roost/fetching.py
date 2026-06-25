@@ -62,10 +62,19 @@ class Release:
         Version string without 'v' prefix.
     assets : list[Asset]
         List of downloadable assets.
+    tag_name : str
+        Original upstream tag (e.g. "v0.10.4", "gping-v1.2.3").
+    published_at : str | None
+        ISO 8601 publish timestamp from the GitHub API, None if absent.
+    prerelease : bool
+        Whether the release is marked as a prerelease.
     """
 
     version: str
     assets: list[Asset]
+    tag_name: str = ""
+    published_at: str | None = None
+    prerelease: bool = False
 
 
 class GitHubRateLimitError(Exception):
@@ -237,6 +246,60 @@ class GitHubFetcher:
         release = await self.get_latest_release(repo)
         return release.version
 
+    def _raise_for_rate_limit(self, repo: str, response: Any) -> None:
+        """
+        Raise GitHubRateLimitError if a 403 response indicates a rate limit.
+
+        Parameters
+        ----------
+        repo : str
+            Repository in "owner/repo" format.
+        response : Any
+            niquests response to inspect.
+
+        Raises
+        ------
+        GitHubRateLimitError
+            If the response is a 403 caused by rate limiting.
+        """
+        # GitHub returns 403 for rate limit exceeded; distinguish from other 403s (e.g. DMCA).
+        if response.status_code == 403:
+            error_message = (response.text or "").lower()
+            if "rate limit" in error_message or "api rate limit exceeded" in error_message:
+                raise GitHubRateLimitError(repo, authenticated=self._token is not None)
+
+    @staticmethod
+    def _release_from_data(data: dict[str, Any]) -> Release:
+        """
+        Build a Release from a GitHub release API object.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Release JSON object from the GitHub API.
+
+        Returns
+        -------
+        Release
+            Parsed release with assets and upstream tag metadata.
+        """
+        assets = [
+            Asset(
+                name=asset["name"],
+                download_url=asset["browser_download_url"],
+                size=asset.get("size"),
+            )
+            for asset in data.get("assets", [])
+        ]
+        tag_name = data["tag_name"]
+        return Release(
+            version=tag_name.lstrip("v"),
+            assets=assets,
+            tag_name=tag_name,
+            published_at=data.get("published_at"),
+            prerelease=bool(data.get("prerelease", False)),
+        )
+
     async def get_latest_release(self, repo: str) -> Release:
         """
         Get full release information from GitHub API.
@@ -260,31 +323,101 @@ class GitHubFetcher:
         """
         url = f"https://api.github.com/repos/{repo}/releases/latest"
         response = await self.client.get(url)
-
-        # Check for rate limiting before raising generic HTTP errors
-        if response.status_code == 403:
-            # GitHub returns 403 for rate limit exceeded
-            # Check if it's actually a rate limit error vs other 403 (like DMCA takedown)
-            error_message = (response.text or "").lower()
-            if "rate limit" in error_message or "api rate limit exceeded" in error_message:
-                raise GitHubRateLimitError(repo, authenticated=self._token is not None)
-
+        self._raise_for_rate_limit(repo, response)
         response.raise_for_status()
-        data = response.json()
+        return self._release_from_data(response.json())
 
-        assets = [
-            Asset(
-                name=asset["name"],
-                download_url=asset["browser_download_url"],
-                size=asset.get("size"),
-            )
-            for asset in data.get("assets", [])
-        ]
+    async def get_release_by_tag(self, repo: str, tag: str) -> Release:
+        """
+        Get release information for a specific tag.
 
-        return Release(
-            version=data["tag_name"].lstrip("v"),
-            assets=assets,
-        )
+        Parameters
+        ----------
+        repo : str
+            Repository in "owner/repo" format.
+        tag : str
+            Upstream release tag (e.g. "v0.10.4").
+
+        Returns
+        -------
+        Release
+            Release information including assets.
+
+        Raises
+        ------
+        niquests.HTTPError
+            If the tag does not exist or the request fails.
+        GitHubRateLimitError
+            If GitHub API rate limit is exceeded.
+        """
+        url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+        response = await self.client.get(url)
+        self._raise_for_rate_limit(repo, response)
+        response.raise_for_status()
+        return self._release_from_data(response.json())
+
+    async def list_releases(
+        self,
+        repo: str,
+        *,
+        limit: int | None = None,
+        include_prerelease: bool = False,
+    ) -> list[Release]:
+        """
+        List releases for a repository, newest first by publish time.
+
+        Drafts are always excluded. Prereleases are excluded unless requested.
+        Results are sorted by `published_at` descending so ordering does not
+        depend on parsing version tags.
+
+        Parameters
+        ----------
+        repo : str
+            Repository in "owner/repo" format.
+        limit : int | None
+            Maximum number of releases to return, by default None (all found).
+        include_prerelease : bool
+            Whether to include prereleases, by default False.
+
+        Returns
+        -------
+        list[Release]
+            Releases sorted newest first.
+
+        Raises
+        ------
+        niquests.HTTPError
+            If a request fails.
+        GitHubRateLimitError
+            If GitHub API rate limit is exceeded.
+        """
+        releases: list[Release] = []
+        per_page = 100
+        max_pages = 10
+        page = 1
+        while page <= max_pages:
+            url = f"https://api.github.com/repos/{repo}/releases?per_page={per_page}&page={page}"
+            response = await self.client.get(url)
+            self._raise_for_rate_limit(repo, response)
+            response.raise_for_status()
+            data = response.json()
+            if len(data) == 0:
+                break
+            for item in data:
+                if bool(item.get("draft", False)):
+                    continue
+                release = self._release_from_data(item)
+                if release.prerelease and not include_prerelease:
+                    continue
+                releases.append(release)
+            if limit is not None and len(releases) >= limit:
+                break
+            page += 1
+
+        releases.sort(key=lambda release: release.published_at or "", reverse=True)
+        if limit is not None:
+            return releases[:limit]
+        return releases
 
     async def get_repo_tree(self, repo: str, ref: str = "main") -> list[RepoFile]:
         """
@@ -311,12 +444,7 @@ class GitHubFetcher:
         """
         url = f"https://api.github.com/repos/{repo}/git/trees/{ref}?recursive=1"
         response = await self.client.get(url)
-
-        if response.status_code == 403:
-            error_message = (response.text or "").lower()
-            if "rate limit" in error_message or "api rate limit exceeded" in error_message:
-                raise GitHubRateLimitError(repo, authenticated=self._token is not None)
-
+        self._raise_for_rate_limit(repo, response)
         response.raise_for_status()
         data = response.json()
 
