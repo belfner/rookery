@@ -19,9 +19,44 @@ from roost.program import (
     Program,
     ProgramMetadata,
 )
+from roost.state import ProgramState
 from roost.sudo import SudoManager
 from roost.system import SystemLinker
+from roost.version_sources import VersionResolution
 from roost.workflows.install import install_or_update_program
+
+
+def _pinned_resolution(state: ProgramState) -> VersionResolution | None:
+    """
+    Build a resolution for reinstalling a pinned program from persisted state.
+
+    Uses the installed identity (which carries source metadata) when it still matches the
+    pin. Returns None when installed and pin state have drifted, so the caller can report
+    drift rather than silently re-resolving.
+
+    Parameters
+    ----------
+    state : ProgramState
+        Program state to derive the resolution from.
+
+    Returns
+    -------
+    VersionResolution | None
+        Resolution built from the persisted pin identity, or None on drift.
+    """
+    pin = state.pin
+    installed = state.installed
+    if pin is None or installed is None:
+        return None
+    if installed.version != pin.version:
+        return None
+    return VersionResolution(
+        requested=pin.version,
+        version=installed.version,
+        upstream_id=installed.upstream_id,
+        source=installed.source,
+        metadata=dict(installed.metadata),
+    )
 
 
 async def update_program(
@@ -77,7 +112,15 @@ async def update_program(
                     )
                 return (False, False, "")
 
-            resolution = await program.resolve_version(pin_selector)
+            # Force reinstalls the pinned bits from persisted identity, never re-resolving.
+            resolution = _pinned_resolution(program.read_state())
+            if resolution is None:
+                console.print(
+                    f"[red]✗ {program.name} pin and installed state have drifted; "
+                    f"run `roost install {program.name}@{pin_selector} --pin` to repair.[/]"
+                )
+                return (False, True, "")
+
             await install_or_update_program(
                 program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
             )

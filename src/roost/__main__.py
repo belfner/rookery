@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import subprocess
@@ -44,14 +45,21 @@ from roost.registry import (
     get_program,
     list_programs,
 )
+from roost.state import PinState
 from roost.sudo import SudoManager
 from roost.sudo_requirement import SudoRequirement
 from roost.system import SystemLinker
+from roost.version import compare_versions
+from roost.version_sources import StaticVersionSource
 from roost.workflows import (
-    install_program,
+    collect_versions,
+    get_pin,
+    install_or_update_program,
     install_programs,
+    pin_installed_version,
     uninstall_program,
     uninstall_programs,
+    unpin_program,
     update_program,
     update_programs,
 )
@@ -86,6 +94,204 @@ NoDowngradeFlag = Annotated[
 ]
 
 
+def _parse_program_selector(program: str, version_opt: str | None) -> tuple[str, str | None]:
+    """
+    Split a "name@version" argument and reconcile it with an explicit --version flag.
+
+    The split happens on the LAST "@" (no program name contains "@").
+
+    Parameters
+    ----------
+    program : str
+        Program argument, optionally "name@version".
+    version_opt : str | None
+        Value of the --version flag, or None.
+
+    Returns
+    -------
+    tuple[str, str | None]
+        (program_name, requested_version) where requested_version is None for latest.
+
+    Raises
+    ------
+    ValueError
+        If both forms are given and disagree.
+    """
+    name = program
+    at_version: str | None = None
+    if "@" in program:
+        name, _, suffix = program.rpartition("@")
+        at_version = suffix if len(suffix) > 0 else None
+
+    if version_opt is not None:
+        if at_version is not None and at_version != version_opt:
+            raise ValueError(f"Conflicting versions: '{at_version}' in name vs '{version_opt}' in --version.")
+        at_version = version_opt
+
+    return name, at_version
+
+
+def _resolve_install_sudo(prog: Program, no_links: bool) -> SudoManager | None:
+    """
+    Authenticate sudo for an install if the program or its links require it.
+
+    Parameters
+    ----------
+    prog : Program
+        Program being installed.
+    no_links : bool
+        Whether link creation is skipped.
+
+    Returns
+    -------
+    SudoManager | None
+        Validated sudo manager, or None when not needed.
+    """
+    if no_links:
+        return None
+    if prog.sudo_requirement == SudoRequirement.REQUIRED:
+        return validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
+    return validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+
+
+def _switch_action(current: str, target: str) -> str:
+    """
+    Describe the action of moving from one installed version to another.
+
+    Parameters
+    ----------
+    current : str
+        Currently installed version.
+    target : str
+        Target version.
+
+    Returns
+    -------
+    str
+        One of "upgrade", "downgrade", or "reinstall".
+    """
+    comparison = compare_versions(target, current)
+    if comparison > 0:
+        return "upgrade"
+    if comparison < 0:
+        return "downgrade"
+    return "reinstall"
+
+
+def _emit_pin_warning(prog: Program) -> None:
+    """Print the program's pin advisory, if it has one."""
+    warning = prog.pin_warning()
+    if warning is not None:
+        console.print(f"[yellow]{warning}[/]")
+
+
+def _install_single(
+    name: str,
+    requested: str | None,
+    *,
+    pin: bool,
+    unpin: bool,
+    no_links: bool,
+    force: bool,
+    yes: bool,
+    reason: str | None = None,
+) -> None:
+    """
+    Resolve, optionally preview, install, and pin/unpin a single program.
+
+    Parameters
+    ----------
+    name : str
+        Program name.
+    requested : str | None
+        Version selector; None means latest.
+    pin : bool
+        Pin the resolved version after a successful install.
+    unpin : bool
+        Clear any pin after a successful install.
+    no_links : bool
+        Skip system link creation.
+    force : bool
+        Reinstall even when already installed at the same version.
+    yes : bool
+        Skip the version-switch confirmation prompt.
+    reason : str | None
+        Optional pin reason, by default None.
+    """
+    try:
+        prog = get_program(name)
+    except KeyError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1) from None
+
+    if requested is not None and requested != "latest" and not prog.supports_exact_versions():
+        console.print(f"[yellow]{name} does not support installing an exact version yet.[/]")
+        console.print(f"[yellow]Use `roost versions {name}` to see what is available.[/]")
+        raise typer.Exit(1)
+
+    state = prog.read_state()
+    current_pin = state.pin if (state.pin is not None and state.pin.enabled) else None
+
+    try:
+        resolution = asyncio.run(prog.resolve_version(requested))
+    except Exception as e:
+        console.print(f"[red]Failed to resolve version for {name}: {e}[/]")
+        raise typer.Exit(1) from None
+
+    already_installed = prog.version_file.exists()
+
+    if already_installed and requested is None and not force and not pin and not unpin:
+        console.print(f"[yellow]{name} is already installed[/]")
+        console.print(f"[yellow]Use 'roost update {name}' to update it[/]")
+        raise typer.Exit(1)
+
+    if current_pin is not None and current_pin.version != resolution.version and not pin and not unpin:
+        console.print(
+            f"[red]{name} is pinned to {current_pin.version}. "
+            f"Pass --pin to repin to {resolution.version} or --unpin to clear the pin.[/]"
+        )
+        raise typer.Exit(1)
+
+    if already_installed:
+        current_version = prog.read_version_file()
+        if current_version != resolution.version:
+            table = Table(title="Plan")
+            table.add_column("Program", style="cyan", no_wrap=True)
+            table.add_column("Current", style="green")
+            table.add_column("Target", style="yellow")
+            table.add_column("Action", style="magenta")
+            table.add_row(
+                name, current_version, resolution.version, _switch_action(current_version, resolution.version)
+            )
+            console.print(table)
+            if not yes and not typer.confirm("Continue?", default=False):
+                console.print("Cancelled")
+                raise typer.Exit(0)
+
+    sudo_mgr = _resolve_install_sudo(prog, no_links)
+
+    try:
+        asyncio.run(
+            install_or_update_program(prog, resolution.version, console, sudo_mgr, not no_links, resolution=resolution)
+        )
+    except Exception as e:
+        console.print(f"[red]✗ Failed to install {name}: {e}[/]")
+        raise typer.Exit(1) from None
+
+    console.print(f"[green]✓ Installed {name} [blue]{resolution.version}[/][/]")
+
+    if pin:
+        pinned = pin_installed_version(prog, reason=reason)
+        console.print(f"[green]✓ Pinned {name} to {pinned.version}[/]")
+        _emit_pin_warning(prog)
+    elif unpin:
+        if unpin_program(prog):
+            console.print(f"[green]✓ Cleared pin on {name}[/]")
+
+    if prog.sudo_requirement == SudoRequirement.NOT_REQUIRED:
+        check_and_warn_path(console)
+
+
 @app.command(name="list")
 def list_command() -> None:
     """
@@ -106,16 +312,20 @@ def list_command() -> None:
     table.add_column("Program", style="cyan", no_wrap=True)
     table.add_column("Current", style="green")
     table.add_column("Status", style="magenta")
+    table.add_column("Pin", style="yellow")
     table.add_column("Links", style="blue")
 
     for prog in installed:
         current = prog.read_version_file()
         link_display, link_style = compute_link_status_for_list(prog)
+        pin = get_pin(prog)
+        pin_display = pin.version if pin is not None else ""
 
         table.add_row(
             prog.name,
             current,
             "Installed",
+            pin_display,
             f"[{link_style}]{link_display}[/]",
         )
 
@@ -124,54 +334,47 @@ def list_command() -> None:
 
 @app.command(name="install")
 def install_command(
-    program: Annotated[str | None, typer.Argument(help="Program name to install (optional)")] = None,
+    program: Annotated[str | None, typer.Argument(help="Program to install, optionally PROGRAM@VERSION")] = None,
+    version: Annotated[str | None, typer.Option("--version", help="Version to install (alias for @VERSION)")] = None,
+    pin: Annotated[bool, typer.Option("--pin", help="Pin the installed version after install")] = False,
+    unpin: Annotated[bool, typer.Option("--unpin", help="Clear any pin after install")] = False,
     all_flag: AllFlag = False,
+    force: ForceFlag = False,
+    yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
 ) -> None:
     """
-    Install new program(s).
+    Install new program(s), optionally at a specific version.
 
-    Without arguments, does nothing. Use --all to install all uninstalled programs.
-    Use --no-links to skip creating system links (no sudo needed).
+    Use PROGRAM@VERSION (or --version) to install an exact version; with no version the
+    latest is installed. Use --pin to hold the installed version, --unpin to clear a pin.
+    Use --all to install all uninstalled programs. Use --no-links to skip system links.
     """
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
         console.print("[yellow]Example: roost install nvim[/]")
         raise typer.Exit(1)
 
+    if pin and unpin:
+        console.print("[red]--pin and --unpin are mutually exclusive[/]")
+        raise typer.Exit(1)
+
     if program is not None:
-        # Install single program
         try:
-            prog = get_program(program)
-
-            # Check if already installed
-            if prog.version_file.exists():
-                console.print(f"[yellow]{program} is already installed[/]")
-                console.print(f"[yellow]Use 'roost update {program}' to update it[/]")
-                raise typer.Exit(1)
-
-            # Validate sudo based on program's sudo requirement and paths
-            if no_links:
-                sudo_mgr = None
-            elif prog.sudo_requirement == SudoRequirement.REQUIRED:
-                # Program requires sudo for installation (e.g., apt install)
-                sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
-            else:
-                # Check if paths need sudo for linking
-                sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
-
-            success, attempted, _version = asyncio.run(
-                install_program(prog, console, sudo_mgr=sudo_mgr, create_links=not no_links)
-            )
-            if not success and attempted:
-                raise typer.Exit(1)
-
-            # Warn if ~/.local/bin not in PATH (only for programs that don't require sudo)
-            if success and prog.sudo_requirement == SudoRequirement.NOT_REQUIRED:
-                check_and_warn_path(console)
-        except KeyError as e:
-            console.print(f"[red]Error: {e}[/]")
+            name, requested = _parse_program_selector(program, version)
+        except ValueError as e:
+            console.print(f"[red]{e}[/]")
             raise typer.Exit(1) from None
+
+        _install_single(
+            name,
+            requested,
+            pin=pin,
+            unpin=unpin,
+            no_links=no_links,
+            force=force,
+            yes=yes,
+        )
     else:
         # Install all uninstalled programs
         programs = list_programs()
@@ -234,6 +437,15 @@ def update_command(
             # Check if update is needed
             async def check_and_update() -> bool:
                 meta = await prog.get_metadata()
+                if meta.pinned and not force:
+                    pin_selector = meta.pin_version or meta.current_version
+                    console.print(
+                        f"[yellow]{prog.name} is pinned to {pin_selector}; latest is {meta.latest_version}. "
+                        f"Use `roost unpin {prog.name}` or `roost install {prog.name}@VERSION --pin`.[/]"
+                    )
+                    return False
+                if meta.pinned and force:
+                    return True
                 if meta.downgrade_available:
                     if no_downgrade:
                         console.print(
@@ -319,6 +531,9 @@ def update_command(
                 if isinstance(meta, BaseException):
                     console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
                     continue
+                # Pin == hold: a pinned program is never moved unless forced.
+                if meta.pinned and not force:
+                    continue
                 if meta.downgrade_available and no_downgrade:
                     continue
                 if force or meta.update_available or meta.downgrade_available:
@@ -327,7 +542,20 @@ def update_command(
 
         programs_to_update, metadata_list = asyncio.run(check_updates())
 
+        # Collect pinned programs that have an available update (skipped unless forced).
+        pinned_skipped: list[tuple[str, str | None]] = []
+        if not force:
+            for prog, meta in zip(installed, metadata_list, strict=True):
+                if isinstance(meta, BaseException):
+                    continue
+                if meta.pinned and (meta.update_available or meta.downgrade_available):
+                    pinned_skipped.append((prog.name, meta.pin_version))
+
         if len(programs_to_update) == 0:
+            if len(pinned_skipped) > 0:
+                pinned_skipped.sort(key=lambda item: item[0].casefold())
+                summary = ", ".join(f"{name} (pinned to {ver})" for name, ver in pinned_skipped)
+                console.print(f"[yellow]Pinned programs skipped: {summary}[/]")
             console.print("[green]All programs are up to date[/]")
             return
 
@@ -336,6 +564,7 @@ def update_command(
         preview_table.add_column("Program", style="cyan", no_wrap=True)
         preview_table.add_column("Current", style="green")
         preview_table.add_column("Latest", style="yellow")
+        preview_table.add_column("State", style="magenta")
 
         for prog, meta in zip(installed, metadata_list, strict=True):
             if prog not in programs_to_update:
@@ -347,19 +576,19 @@ def update_command(
                     prog.name,
                     prog.read_version_file(),
                     f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
+                    "error",
                 )
             elif meta.downgrade_available:
                 preview_table.add_row(
                     prog.name,
                     meta.current_version,
-                    f"[magenta]{meta.latest_version} (downgrade)[/]",
-                )
-            else:
-                preview_table.add_row(
-                    prog.name,
-                    meta.current_version,
                     meta.latest_version or "Unknown",
+                    "downgrade",
                 )
+            elif meta.update_available:
+                preview_table.add_row(prog.name, meta.current_version, meta.latest_version or "Unknown", "update")
+            else:
+                preview_table.add_row(prog.name, meta.current_version, meta.latest_version or "Unknown", "reinstall")
 
         console.print(preview_table)
 
@@ -368,10 +597,15 @@ def update_command(
             for prog, meta in zip(installed, metadata_list, strict=True):
                 if isinstance(meta, BaseException):
                     continue
-                if meta.downgrade_available:
+                if meta.downgrade_available and not meta.pinned:
                     console.print(
                         f"[yellow]Skipped {prog.name} {meta.current_version} -> {meta.latest_version} (downgrade)[/]"
                     )
+
+        if len(pinned_skipped) > 0:
+            pinned_skipped.sort(key=lambda item: item[0].casefold())
+            summary = ", ".join(f"{name} (pinned to {ver})" for name, ver in pinned_skipped)
+            console.print(f"[yellow]Pinned programs skipped: {summary}[/]")
 
         console.print()
 
@@ -827,6 +1061,242 @@ def info_command() -> None:
         console.print(f"  [yellow]Install directory does not exist yet: {config.install_dir}[/yellow]")
 
     console.print()
+
+
+@app.command(name="versions")
+def versions_command(
+    program: Annotated[str, typer.Argument(help="Program name to list versions for")],
+    limit: Annotated[int, typer.Option("--limit", "-n", help="Maximum number of versions to show")] = 10,
+    all_versions: Annotated[bool, typer.Option("--all", "-a", help="Show all available versions")] = False,
+    include_prerelease: Annotated[bool, typer.Option("--include-prerelease", help="Include prereleases")] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+) -> None:
+    """
+    List available versions for a program.
+
+    Shows release date and whether each version is the latest, installed, or pinned.
+    Programs that only expose a single bundled version, or that do not support exact
+    selection yet, report their latest available version instead.
+    """
+    try:
+        prog = get_program(program)
+    except KeyError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1) from None
+
+    effective_limit = None if all_versions else limit
+
+    if isinstance(prog.version_source, StaticVersionSource):
+        label = prog.version_source.version_label
+        if json_output:
+            print(json.dumps({"program": program, "supports_exact": False, "versions": [label]}))
+        else:
+            console.print(f"{program} has one bundled roost version: {label}")
+        return
+
+    if not prog.supports_exact_versions():
+        try:
+            available = asyncio.run(prog.get_available_versions(limit=1))
+        except Exception as e:
+            console.print(f"[red]Failed to fetch versions for {program}: {e}[/]")
+            raise typer.Exit(1) from None
+        latest = available[0].version if len(available) > 0 else "unknown"
+        if json_output:
+            print(json.dumps({"program": program, "supports_exact": False, "latest": latest, "versions": []}))
+        else:
+            console.print(f"{program} exact version selection is not supported yet.")
+            console.print(f"Latest available version: {latest}")
+        return
+
+    try:
+        rows = asyncio.run(collect_versions(prog, limit=effective_limit, include_prerelease=include_prerelease))
+    except Exception as e:
+        console.print(f"[red]Failed to fetch versions for {program}: {e}[/]")
+        raise typer.Exit(1) from None
+
+    if json_output:
+        payload = [
+            {
+                "version": row.version,
+                "released_at": row.released_at,
+                "latest": row.is_latest,
+                "installed": row.is_installed,
+                "pinned": row.is_pinned,
+                "prerelease": row.prerelease,
+            }
+            for row in rows
+        ]
+        print(json.dumps({"program": program, "supports_exact": True, "versions": payload}))
+        return
+
+    table = Table(title=f"Available versions for {program}")
+    table.add_column("Version", style="cyan", no_wrap=True)
+    table.add_column("Released", style="dim")
+    table.add_column("Status", style="green")
+
+    for row in rows:
+        status_parts: list[str] = []
+        if row.is_latest:
+            status_parts.append("latest")
+        if row.is_installed:
+            status_parts.append("installed")
+        if row.is_pinned:
+            status_parts.append("pinned")
+        if row.prerelease:
+            status_parts.append("prerelease")
+        table.add_row(row.version, row.released_at, ",".join(status_parts))
+
+    console.print(table)
+
+
+@app.command(name="pin")
+def pin_command(
+    program: Annotated[str, typer.Argument(help="Program name to pin")],
+    version: Annotated[str | None, typer.Argument(help="Version to pin (defaults to installed)")] = None,
+    install: Annotated[bool, typer.Option("--install", help="Install the version, then pin it")] = False,
+    reason: Annotated[str | None, typer.Option("--reason", help="Reason for the pin")] = None,
+) -> None:
+    """
+    Pin (hold) a program at a version so `roost update` will not move it.
+
+    With no version, pins the currently installed version. With a version and --install,
+    installs that version then pins it; without --install the program must already be
+    installed at that version.
+    """
+    if version is not None and install:
+        _install_single(program, version, pin=True, unpin=False, no_links=False, force=False, yes=False, reason=reason)
+        return
+
+    try:
+        prog = get_program(program)
+    except KeyError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1) from None
+
+    installed = prog.version_file.exists()
+
+    if not installed:
+        console.print(f"[yellow]{program} is not installed.[/]")
+        if version is not None:
+            console.print(
+                f"Use `roost install {program}@{version} --pin` or `roost pin {program} {version} --install`."
+            )
+        else:
+            console.print(f"Install it first, or use `roost pin {program} VERSION --install`.")
+        raise typer.Exit(1)
+
+    if version is not None:
+        current = prog.read_version_file()
+        if current != version:
+            console.print(f"[yellow]{program} is installed at {current}, not {version}.[/]")
+            console.print(
+                f"Use `roost install {program}@{version} --pin` or `roost pin {program} {version} --install`."
+            )
+            raise typer.Exit(1)
+
+    pinned = pin_installed_version(prog, reason=reason)
+    console.print(f"[green]✓ Pinned {program} to {pinned.version}[/]")
+    _emit_pin_warning(prog)
+
+
+@app.command(name="unpin")
+def unpin_command(
+    program: Annotated[str, typer.Argument(help="Program name to unpin")],
+) -> None:
+    """
+    Remove the pin on a program.
+
+    This clears the hold only; it does not install or update anything.
+    """
+    try:
+        prog = get_program(program)
+    except KeyError as e:
+        console.print(f"[red]Error: {e}[/]")
+        raise typer.Exit(1) from None
+
+    if unpin_program(prog):
+        console.print(f"[green]✓ Unpinned {program}[/]")
+    else:
+        console.print(f"[yellow]{program} is not pinned[/]")
+
+
+@app.command(name="pins")
+def pins_command(
+    json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
+) -> None:
+    """
+    List all pinned programs with their pinned version, latest available, and reason.
+    """
+    programs = list_programs()
+    installed = [p for p in programs if p.version_file.exists()]
+    pinned: list[tuple[Program, PinState]] = [(prog, pin) for prog in installed if (pin := get_pin(prog)) is not None]
+
+    if len(pinned) == 0:
+        if json_output:
+            print(json.dumps({"pins": []}))
+        else:
+            console.print("[yellow]No pinned programs[/]")
+        return
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+        transient=True,
+    ) as progress:
+        progress.add_task("Checking latest versions", total=None)
+        latest_versions = asyncio.run(_fetch_latest_versions([prog for prog, _ in pinned]))
+
+    pinned_rows = sorted(zip(pinned, latest_versions, strict=True), key=lambda item: item[0][0].name.casefold())
+
+    if json_output:
+        payload = [
+            {
+                "program": prog.name,
+                "version": pin.version,
+                "latest": latest,
+                "reason": pin.reason,
+            }
+            for (prog, pin), latest in pinned_rows
+        ]
+        print(json.dumps({"pins": payload}))
+        return
+
+    table = Table(title="Pinned programs")
+    table.add_column("Program", style="cyan", no_wrap=True)
+    table.add_column("Version", style="green")
+    table.add_column("Latest", style="yellow")
+    table.add_column("Reason", style="dim")
+
+    for (prog, pin), latest in pinned_rows:
+        table.add_row(prog.name, pin.version, latest or "?", pin.reason or "")
+
+    console.print(table)
+
+
+async def _fetch_latest_versions(programs: list[Program]) -> list[str | None]:
+    """
+    Concurrently fetch latest versions for a list of programs.
+
+    Parameters
+    ----------
+    programs : list[Program]
+        Programs to query.
+
+    Returns
+    -------
+    list[str | None]
+        Latest versions aligned with the input list (None on per-program error).
+    """
+
+    async def one(prog: Program) -> str | None:
+        try:
+            meta = await prog.get_metadata()
+            return meta.latest_version
+        except Exception:
+            return None
+
+    return list(await asyncio.gather(*[one(prog) for prog in programs]))
 
 
 if __name__ == "__main__":

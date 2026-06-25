@@ -454,8 +454,15 @@ class Program(ABC):
         -------
         VersionResolution
             Resolved version identity.
+
+        Raises
+        ------
+        ValueError
+            If an exact version is requested but this program does not support it.
         """
         spec = requested if requested is not None else "latest"
+        if spec != "latest" and not self.supports_exact_versions():
+            raise ValueError(f"{self.name} does not support installing an exact version yet.")
         if self.version_source is None:
             version = await self.get_latest_version() if spec == "latest" else spec
             return VersionResolution(requested=spec, version=version, upstream_id=version, source="legacy")
