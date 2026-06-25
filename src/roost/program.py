@@ -568,7 +568,7 @@ class Program(ABC):
         state = self.read_state()
         pinned = state.is_pinned
         pin_version = state.pin.version if (pinned and state.pin is not None) else None
-        blocked_by_pin = pinned and update_available
+        blocked_by_pin = pinned and (update_available or downgrade_available)
 
         return ProgramMetadata(
             current_version=current,

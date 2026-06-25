@@ -252,12 +252,14 @@ class GitHubReleaseSource:
         Raises
         ------
         ValueError
-            If no release matches the requested exact version.
+            If exact selection is unsupported, or no release matches the version.
         """
         async with GitHubFetcher() as fetcher:
             if requested == "latest":
                 release = await fetcher.get_latest_release(self.github_repo)
                 return self._to_resolution(requested, release)
+            if not self.supports_exact:
+                raise ValueError(f"Exact version selection is not supported yet for {self.github_repo}.")
             return self._to_resolution(requested, await self._resolve_exact(fetcher, requested))
 
     async def _resolve_exact(self, fetcher: GitHubFetcher, version: str) -> Release:

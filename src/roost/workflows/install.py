@@ -16,9 +16,11 @@ from rich.progress import (
 
 from roost.config import config
 from roost.deb_program import DebProgram
+from roost.install_resolution import install_resolution
 from roost.program import Program
 from roost.sudo import SudoManager
 from roost.system import SystemLinker
+from roost.version_sources import VersionResolution
 
 
 async def install_or_update_program(
@@ -27,11 +29,15 @@ async def install_or_update_program(
     console: Console,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
+    *,
+    resolution: VersionResolution | None = None,
 ) -> None:
     """
     Install or update program to specified version.
 
-    Uses the program's own install() method which handles all operations.
+    Uses the program's own install() method which handles all operations. When a
+    resolution is supplied, it is made active for the install so asset resolution uses
+    the resolved upstream tag.
 
     Parameters
     ----------
@@ -45,9 +51,15 @@ async def install_or_update_program(
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
+    resolution : VersionResolution | None
+        Active resolution to bind during install, by default None.
     """
     # Install program (uses program's own install() method)
-    await program.install(version)
+    if resolution is not None:
+        with install_resolution(resolution):
+            await program.install(resolution.version)
+    else:
+        await program.install(version)
 
     # Create system links if requested
     # For .deb programs, SystemLinker is never used (apt handles everything)
@@ -63,9 +75,11 @@ async def install_program(
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
     batch: bool = False,
+    *,
+    requested: str | None = None,
 ) -> tuple[bool, bool, str]:
     """
-    Install a new program.
+    Install a new program at a resolved version.
 
     Parameters
     ----------
@@ -79,6 +93,8 @@ async def install_program(
         Whether to create system links. If False, skip link creation entirely.
     batch : bool
         When True, suppress per-program completion output (summary handles it).
+    requested : str | None
+        Version selector ("latest", "0.10.4"); None resolves to latest.
 
     Returns
     -------
@@ -87,16 +103,17 @@ async def install_program(
         attempted indicates if an install was tried, version is the installed version.
     """
     try:
-        # Get latest version
-        latest_version = await program.get_latest_version()
+        resolution = await program.resolve_version(requested)
 
-        # Use unified install function
-        await install_or_update_program(program, latest_version, console, sudo_mgr, create_links)
+        # Use unified install function with the resolved version identity active
+        await install_or_update_program(
+            program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+        )
 
         if not batch:
-            console.print(f"[green]✓ Installed {program.name} [blue]{latest_version}[/][/]")
+            console.print(f"[green]✓ Installed {program.name} [blue]{resolution.version}[/][/]")
 
-        return (True, True, latest_version)
+        return (True, True, resolution.version)
 
     except Exception as e:
         console.print(f"[red]✗ Failed to install {program.name}: {e}[/]")

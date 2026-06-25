@@ -63,6 +63,28 @@ async def update_program(
     try:
         meta = await program.get_metadata()
 
+        # Pin == hold: a pinned program is never moved by update. With --force it is
+        # reinstalled at the pinned version (not latest, not a different version).
+        if meta.pinned:
+            pin_selector = meta.pin_version or meta.current_version
+            if not force:
+                if not batch:
+                    console.print(
+                        f"[yellow]{program.name} is pinned to {pin_selector}; "
+                        f"latest is {meta.latest_version}. "
+                        f"Use `roost unpin {program.name}` or "
+                        f"`roost install {program.name}@VERSION --pin`.[/]"
+                    )
+                return (False, False, "")
+
+            resolution = await program.resolve_version(pin_selector)
+            await install_or_update_program(
+                program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+            )
+            if not batch:
+                console.print(f"[green]✓ Reinstalled pinned {program.name} [blue]{resolution.version}[/][/]")
+            return (True, True, resolution.version)
+
         if meta.downgrade_available and no_downgrade:
             if not batch:
                 console.print(
@@ -75,15 +97,17 @@ async def update_program(
                 console.print(f"[dim]{program.name} is already up to date ({meta.current_version})[/]")
             return (False, False, "")
 
-        version_to_install = meta.latest_version or meta.current_version
+        resolution = await program.resolve_version("latest")
 
-        # Use unified install function
-        await install_or_update_program(program, version_to_install, console, sudo_mgr, create_links)
+        # Use unified install function with the resolved version identity active
+        await install_or_update_program(
+            program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+        )
 
         if not batch:
-            console.print(f"[green]✓ Updated {program.name} [blue]{version_to_install}[/][/]")
+            console.print(f"[green]✓ Updated {program.name} [blue]{resolution.version}[/][/]")
 
-        return (True, True, version_to_install)
+        return (True, True, resolution.version)
 
     except Exception as e:
         console.print(f"[red]✗ Failed to update {program.name}: {e}[/]")
@@ -144,14 +168,25 @@ async def update_programs(
         metadata_list = await asyncio.gather(*[check_with_progress(p, progress, task) for p in programs])
 
     to_update = []
+    pinned_skipped: list[tuple[str, str | None]] = []
     for prog, meta in zip(programs, metadata_list, strict=True):
         if isinstance(meta, BaseException):
             console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
+            continue
+        # Pin == hold: pinned programs are skipped unless forced (force reinstalls the pin).
+        if meta.pinned and not force:
+            if meta.update_available or meta.downgrade_available:
+                pinned_skipped.append((prog.name, meta.pin_version))
             continue
         if meta.downgrade_available and no_downgrade:
             continue
         if meta.update_available or meta.downgrade_available or force:
             to_update.append(prog)
+
+    if len(pinned_skipped) > 0:
+        pinned_skipped.sort(key=lambda item: item[0].casefold())
+        summary = ", ".join(f"{name} (pinned to {version})" for name, version in pinned_skipped)
+        console.print(f"[yellow]Pinned programs skipped: {summary}[/]")
 
     if len(to_update) == 0:
         console.print("[green]All programs are up to date[/]")
