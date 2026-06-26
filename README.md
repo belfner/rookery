@@ -10,6 +10,8 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 - Only asks for sudo when the install paths actually need it
 - GitHub API token support to avoid rate limits
 - Version tracking with update and downgrade support
+- List and install specific versions (`roost install nvim@0.10.4`)
+- Pin a version to hold it across updates (`roost pin`)
 
 ## Supported Programs
 
@@ -42,16 +44,33 @@ uv tool install git+https://github.com/belfner/roost.git
 ## Usage
 
 ```bash
-roost install nvim        # Install a program
-roost install --all       # Install all programs
-roost update              # Update all installed programs
-roost update nvim --force # Force reinstall
-roost list                # List installed programs
-roost uninstall nvim      # Uninstall a program
-roost link --all          # Create system links
-roost unlink --all        # Remove system links
-roost info                # Show configuration and stats
+roost install nvim          # Install the latest version
+roost install nvim@0.10.4   # Install a specific version
+roost install --all         # Install all programs
+roost update                # Update all installed programs
+roost update nvim --force   # Force reinstall
+roost list                  # List installed programs (with pin status)
+roost uninstall nvim        # Uninstall a program
+roost link --all            # Create system links
+roost unlink --all          # Remove system links
+roost info                  # Show configuration and stats
 ```
+
+### Versions and pinning
+
+```bash
+roost versions nvim              # List available versions (--all, --include-prerelease, --json)
+roost install nvim@0.10.4 --pin  # Install a specific version and pin it
+roost pin nvim                   # Pin the currently installed version
+roost pin nvim 0.10.4 --install  # Install a version, then pin it
+roost unpin nvim                 # Remove the pin
+roost pins                       # List pinned programs (--json)
+```
+
+A pin holds a program at its pinned version: `roost update` skips pinned programs and reports
+them. Use `roost unpin`, or `roost install <prog>@<version> --pin`, to move a pinned program.
+`roost versions` and `roost install <prog>@<version>` work for GitHub-release programs; programs
+with a single bundled version (shell scripts) and a few composite sources install the latest only.
 
 ### Environment Variables
 
