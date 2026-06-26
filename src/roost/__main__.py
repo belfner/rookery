@@ -359,6 +359,11 @@ def install_command(
         console.print("[red]--pin and --unpin are mutually exclusive[/]")
         raise typer.Exit(1)
 
+    # Single-program-only options cannot apply to a bulk install.
+    if program is None and (version is not None or pin or unpin):
+        console.print("[red]--version, --pin, and --unpin require a single program, not --all[/]")
+        raise typer.Exit(1)
+
     if program is not None:
         try:
             name, requested = _parse_program_selector(program, version)

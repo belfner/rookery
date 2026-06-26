@@ -22,6 +22,8 @@ Repository = "https://github.com/belfner/roost"
 dev = [
     "mypy>=1.18.2",
     "pre-commit>=4.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
     "ruff>=0.14.3",
     "twine>=6.2.0",
     "ty>=0.0.1a25",
@@ -79,3 +81,7 @@ python_version = "3.12"
 strict = true
 disallow_untyped_decorators = false
 files = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
