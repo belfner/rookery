@@ -28,6 +28,7 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | gping | GitHub binary | Ping with a graph |
 | hyperfine | GitHub binary | Command-line benchmarking tool |
 | just | GitHub binary | Command runner |
+| kpod | Shell script | `kubectl` wrappers that resolve a pod by name prefix |
 | mc | GitHub binary | MinIO Client for S3-compatible object storage |
 | netron | GitHub AppImage | Neural network model viewer |
 | nvim | GitHub binary | Hyperextensible Vim-based editor |
