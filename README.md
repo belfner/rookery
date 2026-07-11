@@ -24,6 +24,7 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | dysk | GitHub binary | Filesystem information tool |
 | eza | GitHub binary | Modern `ls` replacement |
 | fasttarutils | Shell script | Fast tar compression/extraction using pigz |
+| fastziputils | Shell script | Zip compression/extraction with pv progress bars |
 | gdu | GitHub binary | Disk usage analyzer |
 | gping | GitHub binary | Ping with a graph |
 | hyperfine | GitHub binary | Command-line benchmarking tool |
@@ -33,6 +34,7 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | netron | GitHub AppImage | Neural network model viewer |
 | nvim | GitHub binary | Hyperextensible Vim-based editor |
 | storageexplorer | Standalone | Azure Storage Explorer |
+| tarssh | Shell script | Stream a directory/file over SSH via tar pipe |
 | yazi | GitHub binary | Terminal file manager |
 
 ## Installation
