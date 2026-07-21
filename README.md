@@ -23,7 +23,7 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | dust | GitHub binary | Intuitive `du` alternative |
 | dysk | GitHub binary | Filesystem information tool |
 | eza | GitHub binary | Modern `ls` replacement |
-| fasttarutils | Shell script | Fast tar compression/extraction using pigz |
+| fasttarutils | Python script | Multi-format tar compression/extraction (ftar/funtar) with parallel backends |
 | fastziputils | Shell script | Zip compression/extraction with pv progress bars |
 | gdu | GitHub binary | Disk usage analyzer |
 | gping | GitHub binary | Ping with a graph |
