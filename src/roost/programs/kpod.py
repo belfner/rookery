@@ -246,7 +246,7 @@ Examples:
   if (( ${#user_cmd[@]} > 0 )); then
     cmd+=("${user_cmd[@]}")
   else
-    cmd+=(sh -c 'exec bash 2>/dev/null || exec sh')
+    cmd+=(sh -c 'if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi')
   fi
 
   __kpod_show_cmd "${cmd[@]}"
