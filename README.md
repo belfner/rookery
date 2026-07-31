@@ -18,9 +18,9 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | Program | Type | Description |
 |---------|------|-------------|
 | bat | GitHub binary | `cat` clone with syntax highlighting |
-| blender | GitHub binary | 3D creation suite |
+| blender | Standalone | 3D creation suite |
 | cuda-run | Shell script | Run a command in a throwaway uv environment with a PyPI CUDA toolkit |
-| drawio | GitHub .deb | Diagram editor |
+| drawio | GitHub AppImage | Diagram editor |
 | dust | GitHub binary | Intuitive `du` alternative |
 | dysk | GitHub binary | Filesystem information tool |
 | eza | GitHub binary | Modern `ls` replacement |
@@ -29,18 +29,25 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | gdu | GitHub binary | Disk usage analyzer |
 | gping | GitHub binary | Ping with a graph |
 | hyperfine | GitHub binary | Command-line benchmarking tool |
+| imcat | GitHub source | 24-bit terminal image viewer, compiled from source |
 | just | GitHub binary | Command runner |
 | kpod | Shell script | `kubectl` wrappers that resolve a pod by name prefix |
 | mc | GitHub binary | MinIO Client for S3-compatible object storage |
-| netron | GitHub AppImage | Neural network model viewer |
+| netron | GitHub .deb | Neural network model viewer |
 | nvim | GitHub binary | Hyperextensible Vim-based editor |
-| storageexplorer | Standalone | Azure Storage Explorer |
+| storageexplorer | GitHub binary | Azure Storage Explorer |
 | tarssh | Shell script | Stream a directory/file over SSH via tar pipe |
 | yazi | GitHub binary | Terminal file manager |
 
 ## Installation
 
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv tool install rookery
+```
+
+To install the development version from source:
 
 ```bash
 uv tool install git+https://github.com/belfner/rookery.git
@@ -85,6 +92,8 @@ with a single bundled version (shell scripts) and a few composite sources instal
 | `ROOKERY_BIN_DIR` | Binary symlink directory |
 | `ROOKERY_DESKTOP_DIR` | Desktop entry directory |
 | `ROOKERY_MAN_DIR` | Man page directory |
+| `ROOKERY_TEMP_DIR` | Download staging directory (default: `/tmp/rookery`) |
+| `ROOKERY_MAX_PARALLEL` | Concurrency limit for batch installs and updates (default: 10) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token for higher rate limits |
 
 ## Adding a Program
@@ -93,4 +102,4 @@ Create a `Program` subclass in `src/rookery/programs/`. Programs are discovered 
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/belfner/rookery/blob/master/LICENSE)
