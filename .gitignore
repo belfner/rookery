@@ -13,3 +13,6 @@ wheels/
 
 # Tools directory
 tools/
+
+# Secrets
+.env
