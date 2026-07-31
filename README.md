@@ -19,6 +19,7 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 |---------|------|-------------|
 | bat | GitHub binary | `cat` clone with syntax highlighting |
 | blender | GitHub binary | 3D creation suite |
+| cuda-run | Shell script | Run a command in a throwaway uv environment with a PyPI CUDA toolkit |
 | drawio | GitHub .deb | Diagram editor |
 | dust | GitHub binary | Intuitive `du` alternative |
 | dysk | GitHub binary | Filesystem information tool |
