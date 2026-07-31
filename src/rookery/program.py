@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import getpass
-import grp
-import os
 import shutil
 from abc import (
     ABC,
@@ -28,7 +25,6 @@ from rookery.state import (
     utc_now_iso,
     write_program_state_atomic,
 )
-from rookery.sudo import SudoManager
 from rookery.sudo_requirement import SudoRequirement
 from rookery.version import compare_versions
 from rookery.version_sources import (
@@ -108,32 +104,29 @@ class Program(ABC):
 
     def _ensure_install_dir(self) -> None:
         """
-        Ensure install directory exists with proper ownership.
+        Ensure the install directory exists.
 
-        Creates the base install directory with sudo if needed, then sets
-        ownership to current user.
+        The CLI runs a privilege preflight that creates the shared install root under
+        elevation and explains why before prompting, so by the time this runs the root
+        is normally present and user-owned. This remains a defensive, non-interactive
+        fallback for callers that bypass the CLI.
+
+        Raises
+        ------
+        PermissionError
+            The install root is absent and cannot be created without elevation.
         """
         base_install_dir = config.install_dir
 
-        # If base directory doesn't exist and we don't have write access to parent
         if not base_install_dir.exists():
-            parent_dir = base_install_dir.parent
-            if not os.access(parent_dir, os.W_OK):
-                # Need sudo to create base directory
-                sudo_mgr = SudoManager()
-                if not sudo_mgr.validate_and_cache():
-                    raise RuntimeError("Failed to obtain sudo credentials")
-
-                # Create with sudo
-                sudo_mgr.run_as_root(["mkdir", "-p", str(base_install_dir)])
-
-                # Set ownership to current user
-                current_user = getpass.getuser()
-                current_group = grp.getgrgid(os.getgid()).gr_name
-                sudo_mgr.run_as_root(["chown", f"{current_user}:{current_group}", str(base_install_dir)])
-            else:
-                # Can create without sudo
+            try:
                 base_install_dir.mkdir(parents=True, exist_ok=True)
+            except PermissionError as exc:
+                raise PermissionError(
+                    f"Install root {base_install_dir} requires elevation to create. "
+                    "Run this through the rookery CLI, which explains and requests it, "
+                    "or set ROOKERY_INSTALL_DIR to a directory you own."
+                ) from exc
 
         # Create program-specific directory (should not need sudo after base exists)
         self.install_dir.mkdir(parents=True, exist_ok=True)

@@ -37,6 +37,7 @@ from rookery.link_status import (
     compute_link_status,
     compute_link_status_for_list,
 )
+from rookery.privilege import preflight
 from rookery.program import (
     Program,
     ProgramMetadata,
@@ -133,7 +134,10 @@ def _parse_program_selector(program: str, version_opt: str | None) -> tuple[str,
 
 def _resolve_install_sudo(prog: Program, no_links: bool) -> SudoManager | None:
     """
-    Authenticate sudo for an install if the program or its links require it.
+    Explain and authenticate every elevation reason for a single install.
+
+    Delegates to the privilege preflight so the install root, the program itself, and
+    the integration paths are each explained before one sudo prompt appears.
 
     Parameters
     ----------
@@ -145,13 +149,9 @@ def _resolve_install_sudo(prog: Program, no_links: bool) -> SudoManager | None:
     Returns
     -------
     SudoManager | None
-        Validated sudo manager, or None when not needed.
+        Validated sudo manager, or None when no reason applies.
     """
-    if no_links:
-        return None
-    if prog.sudo_requirement == SudoRequirement.REQUIRED:
-        return validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
-    return validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+    return preflight(console, [prog], create_links=not no_links)
 
 
 def _switch_action(current: str, target: str) -> str:
@@ -389,20 +389,8 @@ def install_command(
             console.print("[green]All programs are already installed[/]")
             return
 
-        # Check if any programs require sudo for installation
-        requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in uninstalled)
-
-        # Validate sudo if:
-        # 1. Linking is enabled AND paths need sudo, OR
-        # 2. Any programs require sudo for installation (e.g., .deb via apt)
-        if no_links:
-            sudo_mgr = None
-        elif requires_sudo_programs:
-            # Programs require sudo for installation (e.g., apt install)
-            sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for installation")
-        else:
-            # Only check if paths need sudo for linking
-            sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+        # Explain and satisfy every elevation reason once, before the concurrent installs start
+        sudo_mgr = preflight(console, uninstalled, create_links=not no_links)
 
         asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr, create_links=not no_links))
 
