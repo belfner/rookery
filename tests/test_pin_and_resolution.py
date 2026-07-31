@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from roost.state import (
+from rookery.state import (
     InstalledState,
     PinState,
     ProgramState,
 )
-from roost.workflows.pin import (
+from rookery.workflows.pin import (
     get_pin,
     pin_installed_version,
     unpin_program,
 )
-from roost.workflows.update import _pinned_resolution
+from rookery.workflows.update import _pinned_resolution
 from tests.conftest import DummyProgram
 
 

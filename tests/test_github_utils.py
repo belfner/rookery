@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from roost import github_utils
-from roost.fetching import Asset
-from roost.github_utils import get_github_asset_url
-from roost.install_resolution import install_resolution
-from roost.version_sources import VersionResolution
+from rookery import github_utils
+from rookery.fetching import Asset
+from rookery.github_utils import get_github_asset_url
+from rookery.install_resolution import install_resolution
+from rookery.version_sources import VersionResolution
 from tests.conftest import (
     FakeFetcher,
     make_release,

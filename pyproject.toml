@@ -1,7 +1,7 @@
 [project]
-name = "roost"
-version = "0.6.0"
-description = "Roost - package manager for third-party development tools"
+name = "rookery"
+version = "0.7.0"
+description = "Rookery - package manager for third-party development tools"
 readme = "README.md"
 authors = [
     { name = "belfner", email = "belfner@belfner.com" }
@@ -15,8 +15,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/belfner/roost"
-Repository = "https://github.com/belfner/roost"
+Homepage = "https://github.com/belfner/rookery"
+Repository = "https://github.com/belfner/rookery"
 
 [dependency-groups]
 dev = [
@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-roost = "roost.__main__:app"
+rookery = "rookery.__main__:app"
 
 [build-system]
 requires = ["uv_build>=0.9.4,<0.10.0"]

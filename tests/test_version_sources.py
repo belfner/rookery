@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from roost import version_sources
-from roost.version_sources import (
+from rookery import version_sources
+from rookery.version_sources import (
     GitHubReleaseSource,
     StaticVersionSource,
 )

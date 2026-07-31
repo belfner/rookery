@@ -841,8 +841,8 @@ wheels = [
 ]
 
 [[package]]
-name = "roost"
-version = "0.6.0"
+name = "rookery"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "niquests" },

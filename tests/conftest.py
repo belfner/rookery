@@ -1,4 +1,4 @@
-"""Shared test fixtures and fakes for roost version-management tests."""
+"""Shared test fixtures and fakes for rookery version-management tests."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ from typing import Any
 import niquests
 import pytest
 
-from roost.fetching import (
+from rookery.fetching import (
     Asset,
     Release,
 )
-from roost.program import Program
-from roost.sudo_requirement import SudoRequirement
+from rookery.program import Program
+from rookery.sudo_requirement import SudoRequirement
 
 
 def make_release(

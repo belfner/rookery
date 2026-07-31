@@ -1,4 +1,4 @@
-# Roost
+# Rookery
 
 Package manager for third-party dev tools on Linux. Installs, updates, and wires up symlinks, man pages, and desktop entries so you don't have to.
 
@@ -10,8 +10,8 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 - Only asks for sudo when the install paths actually need it
 - GitHub API token support to avoid rate limits
 - Version tracking with update and downgrade support
-- List and install specific versions (`roost install nvim@0.10.4`)
-- Pin a version to hold it across updates (`roost pin`)
+- List and install specific versions (`rookery install nvim@0.10.4`)
+- Pin a version to hold it across updates (`rookery pin`)
 
 ## Supported Programs
 
@@ -43,53 +43,53 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv tool install git+https://github.com/belfner/roost.git
+uv tool install git+https://github.com/belfner/rookery.git
 ```
 
 ## Usage
 
 ```bash
-roost install nvim          # Install the latest version
-roost install nvim@0.10.4   # Install a specific version
-roost install --all         # Install all programs
-roost update                # Update all installed programs
-roost update nvim --force   # Force reinstall
-roost list                  # List installed programs (with pin status)
-roost uninstall nvim        # Uninstall a program
-roost link --all            # Create system links
-roost unlink --all          # Remove system links
-roost info                  # Show configuration and stats
+rookery install nvim          # Install the latest version
+rookery install nvim@0.10.4   # Install a specific version
+rookery install --all         # Install all programs
+rookery update                # Update all installed programs
+rookery update nvim --force   # Force reinstall
+rookery list                  # List installed programs (with pin status)
+rookery uninstall nvim        # Uninstall a program
+rookery link --all            # Create system links
+rookery unlink --all          # Remove system links
+rookery info                  # Show configuration and stats
 ```
 
 ### Versions and pinning
 
 ```bash
-roost versions nvim              # List available versions (--all, --include-prerelease, --json)
-roost install nvim@0.10.4 --pin  # Install a specific version and pin it
-roost pin nvim                   # Pin the currently installed version
-roost pin nvim 0.10.4 --install  # Install a version, then pin it
-roost unpin nvim                 # Remove the pin
-roost pins                       # List pinned programs (--json)
+rookery versions nvim              # List available versions (--all, --include-prerelease, --json)
+rookery install nvim@0.10.4 --pin  # Install a specific version and pin it
+rookery pin nvim                   # Pin the currently installed version
+rookery pin nvim 0.10.4 --install  # Install a version, then pin it
+rookery unpin nvim                 # Remove the pin
+rookery pins                       # List pinned programs (--json)
 ```
 
-A pin holds a program at its pinned version: `roost update` skips pinned programs and reports
-them. Use `roost unpin`, or `roost install <prog>@<version> --pin`, to move a pinned program.
-`roost versions` and `roost install <prog>@<version>` work for GitHub-release programs; programs
+A pin holds a program at its pinned version: `rookery update` skips pinned programs and reports
+them. Use `rookery unpin`, or `rookery install <prog>@<version> --pin`, to move a pinned program.
+`rookery versions` and `rookery install <prog>@<version>` work for GitHub-release programs; programs
 with a single bundled version (shell scripts) and a few composite sources install the latest only.
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `ROOST_INSTALL_DIR` | Installation directory (default: `/opt/roost-programs`) |
-| `ROOST_BIN_DIR` | Binary symlink directory |
-| `ROOST_DESKTOP_DIR` | Desktop entry directory |
-| `ROOST_MAN_DIR` | Man page directory |
+| `ROOKERY_INSTALL_DIR` | Installation directory (default: `/opt/rookery-programs`) |
+| `ROOKERY_BIN_DIR` | Binary symlink directory |
+| `ROOKERY_DESKTOP_DIR` | Desktop entry directory |
+| `ROOKERY_MAN_DIR` | Man page directory |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token for higher rate limits |
 
 ## Adding a Program
 
-Create a `Program` subclass in `src/roost/programs/`. Programs are discovered automatically at runtime. See `agent_docs/new_program.md` for the template and conventions.
+Create a `Program` subclass in `src/rookery/programs/`. Programs are discovered automatically at runtime. See `agent_docs/new_program.md` for the template and conventions.
 
 ## License
 

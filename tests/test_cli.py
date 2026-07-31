@@ -7,10 +7,10 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from roost import __main__
-from roost.config import config
-from roost.registry import get_program
-from roost.state import (
+from rookery import __main__
+from rookery.config import config
+from rookery.registry import get_program
+from rookery.state import (
     InstalledState,
     PinState,
     ProgramState,
@@ -65,7 +65,7 @@ def test_help_lists_new_commands() -> None:
 def test_versions_static_program() -> None:
     result = runner.invoke(__main__.app, ["versions", "fasttarutils"])
     assert result.exit_code == 0
-    assert "bundled roost version" in result.output
+    assert "bundled rookery version" in result.output
     assert "script" in result.output
 
 

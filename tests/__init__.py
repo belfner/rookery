@@ -1,1 +1,1 @@
-"""Test suite for roost."""
+"""Test suite for rookery."""

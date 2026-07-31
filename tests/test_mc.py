@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import pytest
 
-from roost import (
+from rookery import (
     github_utils,
     version_sources,
 )
-from roost.fetching import (
+from rookery.fetching import (
     Asset,
     Release,
 )
-from roost.install_resolution import install_resolution
-from roost.operations import (
+from rookery.install_resolution import install_resolution
+from rookery.operations import (
     DownloadFile,
     MakeExecutable,
 )
-from roost.programs.mc import McProgram
-from roost.version import compare_versions
+from rookery.programs.mc import McProgram
+from rookery.version import compare_versions
 from tests.conftest import (
     FakeFetcher,
     make_release,
