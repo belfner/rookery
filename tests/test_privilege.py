@@ -133,3 +133,39 @@ class TestPreflight:
 def test_blocked_classification_requires_non_root() -> None:
     """Guard: the BLOCKED tests above are meaningless when running as root."""
     assert os.geteuid() != 0
+
+
+class TestInvocationDetection:
+    """The prefix used when echoing commands back to the user."""
+
+    def test_uv_cache_executable_suggests_uvx(self, tmp_path: Path, monkeypatch) -> None:
+        cache = tmp_path / "uvcache"
+        exe = cache / "archive-v0" / "abc" / "bin" / "rookery"
+        exe.parent.mkdir(parents=True)
+        exe.touch()
+        monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+        monkeypatch.setattr("sys.argv", [str(exe)])
+
+        from rookery.cli_helpers import _detect_invocation
+
+        assert _detect_invocation() == "uvx rookery"
+
+    def test_executable_outside_cache_suggests_bare_command(self, tmp_path: Path, monkeypatch) -> None:
+        cache = tmp_path / "uvcache"
+        cache.mkdir()
+        exe = tmp_path / "tools" / "rookery" / "bin" / "rookery"
+        exe.parent.mkdir(parents=True)
+        exe.touch()
+        monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+        monkeypatch.setattr("sys.argv", [str(exe)])
+
+        from rookery.cli_helpers import _detect_invocation
+
+        assert _detect_invocation() == "rookery"
+
+    def test_unresolvable_executable_falls_back_to_bare(self, monkeypatch) -> None:
+        monkeypatch.setattr("sys.argv", [""])
+
+        from rookery.cli_helpers import _detect_invocation
+
+        assert _detect_invocation() == "rookery"

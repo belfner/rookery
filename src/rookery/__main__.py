@@ -24,6 +24,7 @@ from rich.table import Table
 
 from rookery import __version__
 from rookery.cli_helpers import (
+    RUN,
     check_and_warn_path,
     validate_sudo_if_needed,
     validate_sudo_or_exit,
@@ -226,7 +227,7 @@ def _install_single(
 
     if requested is not None and requested != "latest" and not prog.supports_exact_versions():
         console.print(f"[yellow]{name} does not support installing an exact version yet.[/]")
-        console.print(f"[yellow]Use `rookery versions {name}` to see what is available.[/]")
+        console.print(f"[yellow]Use `{RUN} versions {name}` to see what is available.[/]")
         raise typer.Exit(1)
 
     state = prog.read_state()
@@ -242,7 +243,7 @@ def _install_single(
 
     if already_installed and requested is None and not force and not pin and not unpin:
         console.print(f"[yellow]{name} is already installed[/]")
-        console.print(f"[yellow]Use 'rookery update {name}' to update it[/]")
+        console.print(f"[yellow]Use '{RUN} update {name}' to update it[/]")
         raise typer.Exit(1)
 
     if current_pin is not None and current_pin.version != resolution.version and not pin and not unpin:
@@ -352,7 +353,7 @@ def install_command(
     """
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: rookery install nvim[/]")
+        console.print(f"[yellow]Example: {RUN} install nvim[/]")
         raise typer.Exit(1)
 
     if pin and unpin:
@@ -424,7 +425,7 @@ def update_command(
             # Check if installed
             if not prog.install_dir.exists():
                 console.print(f"[yellow]{program} is not installed[/]")
-                console.print(f"[yellow]Use 'rookery install {program}' to install it[/]")
+                console.print(f"[yellow]Use '{RUN} install {program}' to install it[/]")
                 raise typer.Exit(1)
 
             # Check if update is needed
@@ -434,7 +435,7 @@ def update_command(
                     pin_selector = meta.pin_version or meta.current_version
                     console.print(
                         f"[yellow]{prog.name} is pinned to {pin_selector}; latest is {meta.latest_version}. "
-                        f"Use `rookery unpin {prog.name}` or `rookery install {prog.name}@VERSION --pin`.[/]"
+                        f"Use `{RUN} unpin {prog.name}` or `{RUN} install {prog.name}@VERSION --pin`.[/]"
                     )
                     return False
                 if meta.pinned and force:
@@ -688,7 +689,7 @@ def uninstall_command(
     """
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: rookery uninstall nvim[/]")
+        console.print(f"[yellow]Example: {RUN} uninstall nvim[/]")
         raise typer.Exit(1)
 
     if program is not None:
@@ -738,8 +739,8 @@ def link_command(
     # Validate arguments
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: rookery link nvim[/]")
-        console.print("[yellow]Or: rookery link --all[/]")
+        console.print(f"[yellow]Example: {RUN} link nvim[/]")
+        console.print(f"[yellow]Or: {RUN} link --all[/]")
         raise typer.Exit(1)
 
     # Validate sudo
@@ -864,8 +865,8 @@ def unlink_command(
     # Validate arguments
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")
-        console.print("[yellow]Example: rookery unlink nvim[/]")
-        console.print("[yellow]Or: rookery unlink --all[/]")
+        console.print(f"[yellow]Example: {RUN} unlink nvim[/]")
+        console.print(f"[yellow]Or: {RUN} unlink --all[/]")
         raise typer.Exit(1)
 
     # Validate sudo
@@ -1150,7 +1151,7 @@ def pin_command(
     reason: Annotated[str | None, typer.Option("--reason", help="Reason for the pin")] = None,
 ) -> None:
     """
-    Pin (hold) a program at a version so `rookery update` will not move it.
+    Pin (hold) a program at a version so the `update` command will not move it.
 
     With no version, pins the currently installed version. With a version and --install,
     installs that version then pins it; without --install the program must already be
@@ -1172,10 +1173,10 @@ def pin_command(
         console.print(f"[yellow]{program} is not installed.[/]")
         if version is not None:
             console.print(
-                f"Use `rookery install {program}@{version} --pin` or `rookery pin {program} {version} --install`."
+                f"Use `{RUN} install {program}@{version} --pin` or `{RUN} pin {program} {version} --install`."
             )
         else:
-            console.print(f"Install it first, or use `rookery pin {program} VERSION --install`.")
+            console.print(f"Install it first, or use `{RUN} pin {program} VERSION --install`.")
         raise typer.Exit(1)
 
     if version is not None:
@@ -1183,7 +1184,7 @@ def pin_command(
         if current != version:
             console.print(f"[yellow]{program} is installed at {current}, not {version}.[/]")
             console.print(
-                f"Use `rookery install {program}@{version} --pin` or `rookery pin {program} {version} --install`."
+                f"Use `{RUN} install {program}@{version} --pin` or `{RUN} pin {program} {version} --install`."
             )
             raise typer.Exit(1)
 

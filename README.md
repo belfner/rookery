@@ -2,16 +2,93 @@
 
 Package manager for third-party dev tools on Linux. Installs, updates, and wires up symlinks, man pages, and desktop entries so you don't have to.
 
-## Features
+Requires [uv](https://docs.astral.sh/uv/). Rookery needs Python 3.12+, which uv normally provisions for you. The program catalog currently targets Linux x86-64.
 
-- Async downloads with Rich progress bars
-- Parallel batch installs
-- Symlinks, man pages, and desktop entries set up automatically
-- Only asks for sudo when the install paths actually need it
-- GitHub API token support to avoid rate limits
-- Version tracking with update and downgrade support
-- List and install specific versions (`rookery install nvim@0.10.4`)
-- Pin a version to hold it across updates (`rookery pin`)
+## Quick start
+
+You don't need to install rookery to use it:
+
+```bash
+uvx rookery install nvim
+uvx rookery list
+```
+
+`uvx rookery` alone prints the available commands. Each invocation runs one command, so `uvx rookery info install gdu` is not valid:
+
+```text
+uvx rookery [OPTIONS] COMMAND [ARGS]
+```
+
+Two things worth knowing before your first install:
+
+- **uv caches the runner.** Later `uvx rookery` commands reuse the cached copy and start fast. Run `uvx rookery@latest info` when you want to check for a newer rookery.
+- **The first install may ask for sudo once.** Rookery explains why before prompting. See [First run and sudo](#first-run-and-sudo).
+
+## How it works
+
+Rookery manages two kinds of program, and the difference shows up in where files land and when sudo is needed.
+
+**Archive and script programs** (most of the catalog):
+
+- The program is downloaded into its own directory under `/opt/rookery-programs/<name>/`
+- Commands are exposed by symlinking into `~/.local/bin`; man pages and desktop entries likewise
+- Version state lives beside the program in `.rookery-state.json`, with `.version` as the installed marker
+- Uninstalling removes that directory and its links
+
+**System-package programs** (currently netron):
+
+- Rookery keeps only metadata under the install root; the payload is installed system-wide by apt
+- These need sudo on every install, update, and uninstall, because apt does
+- Uninstalling goes through dpkg
+
+The runner is ephemeral, the managed system is not. Clearing or refreshing uv's rookery cache does not touch installed programs, their state, or their links.
+
+## Choose how to run rookery
+
+| Mode | Command | Best for | Rookery version |
+|------|---------|----------|-----------------|
+| Cached run | `uvx rookery <cmd>` | normal use | reuses the cached copy, or an installed uv tool if you have one |
+| Explicit latest | `uvx rookery@latest <cmd>` | checking for a new release | forces a latest-version check |
+| Ignore installed tool | `uvx --isolated rookery <cmd>` | bypassing a persistent install | ignores an installed uv tool; does not refresh the cache |
+| Persistent install | `uv tool install rookery` | frequent use, shell completion | `uv tool upgrade rookery` |
+| Pinned | `uvx rookery@0.7.0 <cmd>` | scripts and automation | fixed until you edit it |
+
+Isolation and freshness are independent: `--isolated` ignores an installed tool but does not refresh the cache. Use `uvx --isolated rookery@latest` if you want both.
+
+For a persistent install:
+
+```bash
+uv tool install rookery
+uv tool upgrade rookery
+uv tool uninstall rookery
+```
+
+Examples below use `uvx rookery`. If you installed rookery persistently, drop the `uvx` and run `rookery` directly.
+
+Two things that sound similar but are not: `rookery update` updates the programs rookery manages, not rookery itself. `rookery pin nvim` pins a managed program; `rookery@0.7.0` pins the runner.
+
+## First run and sudo
+
+On a fresh machine the install root `/opt/rookery-programs` does not exist yet, and `/opt` is owned by root. Rookery creates that directory once, then hands ownership to you, so ordinary installs afterwards need no password. It tells you this before prompting.
+
+Sudo is still required in three cases:
+
+- Installing, updating, or removing a system-package program such as netron, because apt needs it every time
+- Writing to integration directories you don't own, if you have pointed `ROOKERY_BIN_DIR`, `ROOKERY_DESKTOP_DIR`, or `ROOKERY_MAN_DIR` somewhere protected
+- Creating the install root, the one-time case above
+
+To skip the install-root prompt entirely, put the root somewhere you already own:
+
+```bash
+mkdir -p "$HOME/.local/share/rookery-programs"
+export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"
+```
+
+Keep that export in your shell startup. Rookery reads it on every invocation, so setting it for one command only would leave later commands looking at a different root.
+
+If rookery finds an install root that already exists but you cannot write to, it stops and asks you to choose a different root. It will not take ownership of a directory it did not create.
+
+`--no-links` skips creating symlinks, desktop entries, and man page links. It does not avoid creating the install root, and it does not make a system-package program unprivileged.
 
 ## Supported Programs
 
@@ -39,62 +116,144 @@ Package manager for third-party dev tools on Linux. Installs, updates, and wires
 | tarssh | Shell script | Stream a directory/file over SSH via tar pipe |
 | yazi | GitHub binary | Terminal file manager |
 
-## Installation
-
-Requires Python 3.12+ and [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv tool install rookery
-```
-
-To install the development version from source:
-
-```bash
-uv tool install git+https://github.com/belfner/rookery.git
-```
+"Type" describes where the program comes from upstream. Binary selectors currently target Linux x86-64.
 
 ## Usage
 
+Inspect what is installed:
+
 ```bash
-rookery install nvim          # Install the latest version
-rookery install nvim@0.10.4   # Install a specific version
-rookery install --all         # Install all programs
-rookery update                # Update all installed programs
-rookery update nvim --force   # Force reinstall
-rookery list                  # List installed programs (with pin status)
-rookery uninstall nvim        # Uninstall a program
-rookery link --all            # Create system links
-rookery unlink --all          # Remove system links
-rookery info                  # Show configuration and stats
+uvx rookery list                # Installed programs, versions, pin and link status
+uvx rookery info                # Configuration, paths, and stats
+uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
+```
+
+Install:
+
+```bash
+uvx rookery install nvim          # Latest version
+uvx rookery install nvim@0.10.4   # Specific version
+uvx rookery install --all         # Everything in the catalog
+uvx rookery install nvim --no-links   # Skip system integration
+```
+
+Maintain:
+
+```bash
+uvx rookery update              # Update everything installed
+uvx rookery update nvim --force # Force reinstall
+uvx rookery uninstall nvim
+```
+
+Integrate:
+
+```bash
+uvx rookery link --all
+uvx rookery unlink --all
 ```
 
 ### Versions and pinning
 
 ```bash
-rookery versions nvim              # List available versions (--all, --include-prerelease, --json)
-rookery install nvim@0.10.4 --pin  # Install a specific version and pin it
-rookery pin nvim                   # Pin the currently installed version
-rookery pin nvim 0.10.4 --install  # Install a version, then pin it
-rookery unpin nvim                 # Remove the pin
-rookery pins                       # List pinned programs (--json)
+uvx rookery versions nvim              # List available versions
+uvx rookery install nvim@0.10.4 --pin  # Install a specific version and pin it
+uvx rookery pin nvim                   # Pin the currently installed version
+uvx rookery pin nvim 0.10.4 --install  # Install a version, then pin it
+uvx rookery unpin nvim                 # Remove the pin
+uvx rookery pins                       # List pinned programs (--json)
 ```
 
-A pin holds a program at its pinned version: `rookery update` skips pinned programs and reports
-them. Use `rookery unpin`, or `rookery install <prog>@<version> --pin`, to move a pinned program.
-`rookery versions` and `rookery install <prog>@<version>` work for GitHub-release programs; programs
-with a single bundled version (shell scripts) and a few composite sources install the latest only.
+A pin holds a program at its pinned version: `rookery update` skips pinned programs and reports them. Use `rookery unpin`, or `rookery install <prog>@<version> --pin`, to move a pinned program. `rookery versions` and `rookery install <prog>@<version>` work for GitHub-release programs; programs with a single bundled version (shell scripts) and a few composite sources install the latest only.
 
-### Environment Variables
+## Configuration
 
 | Variable | Description |
 |----------|-------------|
-| `ROOKERY_INSTALL_DIR` | Installation directory (default: `/opt/rookery-programs`) |
-| `ROOKERY_BIN_DIR` | Binary symlink directory |
+| `ROOKERY_INSTALL_DIR` | Installation directory (default: `/opt/rookery-programs`). Point this somewhere you own to avoid the one-time sudo prompt |
+| `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`) |
 | `ROOKERY_DESKTOP_DIR` | Desktop entry directory |
 | `ROOKERY_MAN_DIR` | Man page directory |
 | `ROOKERY_TEMP_DIR` | Download staging directory (default: `/tmp/rookery`) |
 | `ROOKERY_MAX_PARALLEL` | Concurrency limit for batch installs and updates (default: 10) |
-| `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token for higher rate limits |
+| `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token, lifting the anonymous 60 requests/hour limit |
+
+Rookery reads these on every invocation, so put any setting you want to keep in your shell startup rather than passing it to a single command.
+
+For the GitHub token, export it rather than putting it in a command, so it stays out of your shell history:
+
+```bash
+export GITHUB_TOKEN="..."
+uvx rookery versions nvim
+```
+
+`uvx rookery info` shows which paths came from the environment and whether a token was found.
+
+## Troubleshooting
+
+### Rookery installed a program, but my shell runs a different one
+
+`Linked` means an entry exists at rookery's integration path. It does not prove that the rookery-managed command is the one your shell resolves. A program installed by your distribution can shadow it:
+
+```bash
+$ uvx rookery install gdu
+✓ Installed gdu 5.36.1
+$ which gdu
+/usr/bin/gdu          # the distro copy wins
+```
+
+Diagnose with `type -a`, which shows every candidate plus any alias or shell function:
+
+```bash
+type -a gdu
+command -v gdu
+```
+
+If `/usr/bin` comes before `~/.local/bin` in your `PATH`, put the user directory first and refresh your shell's command cache:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+hash -r
+```
+
+You can always run the rookery copy explicitly with `~/.local/bin/gdu`.
+
+### Rookery asked for sudo and I was only installing a normal program
+
+Expected on a fresh machine: the install root does not exist yet and lives under root-owned `/opt`. Rookery creates it once and hands it to you. See [First run and sudo](#first-run-and-sudo) for the cases where sudo is genuinely required every time, and for how to avoid it entirely.
+
+If the password is rejected or the prompt times out, the command is safe to rerun.
+
+### Am I running an old rookery?
+
+`uvx rookery` reuses a cached copy. To check and refresh:
+
+```bash
+uvx rookery@latest info        # shows the version that ran
+uv tool upgrade rookery        # if you installed it persistently
+uv cache clean rookery         # last resort
+```
+
+### GitHub rate limiting
+
+Without a token the GitHub API allows 60 requests per hour, which `rookery info` reports. Version listing and installs consume that budget. Set `GITHUB_TOKEN` or `GH_TOKEN` to lift it.
+
+## Development
+
+Preview the current branch without installing anything:
+
+```bash
+uvx --from git+https://github.com/belfner/rookery.git rookery info
+```
+
+Work on rookery itself:
+
+```bash
+git clone https://github.com/belfner/rookery.git
+cd rookery
+uv sync
+uv run rookery info
+make check          # lint, format check, typecheck, tests
+```
 
 ## Adding a Program
 
