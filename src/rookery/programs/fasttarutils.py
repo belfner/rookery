@@ -814,7 +814,7 @@ archive size is known, like ``pv``). The decompressor feeds tar over a direct
 OS pipe. With --no-progress the decompressor reads the file itself and Python
 is entirely out of the data path.
 
-Smart extraction behavior (default, from the funtargz shell script):
+Smart extraction behavior (default):
   - archive contains a single root directory  -> extract into the current dir
   - archive contains multiple files/dirs      -> extract into ./<archive-name>/
 Overridden by -d DIR (explicit target), -c (current dir), or -s (always
@@ -1321,7 +1321,7 @@ def smart_finalize(tmpdir: Path, base_name: str, force: bool) -> Path:
 # --------------------------------------------------------------------------- #
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments (flags mirror the funtargz shell script)."""
+    """Parse command-line arguments for funtar."""
     parser = argparse.ArgumentParser(
         description="Extract a compressed tar archive via the best available "
                     "(preferably parallel) decompressor. The format is "

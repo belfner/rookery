@@ -5,6 +5,7 @@
 
 ```python
 from pathlib import Path
+from rookery.config import config
 from rookery.program import Program
 from rookery.operations import InstallOperation, DownloadArchive, ExtractFiles
 from rookery.github_utils import get_github_latest_version, get_github_asset_url
@@ -13,13 +14,17 @@ class MyProgram(Program):
     program_name = "myprogram"
     binary_files = [Path("bin/myprogram")]
     man_page_files = {"man1": Path("share/man/man1/myprogram.1")}
-    desktop_entry_config = {
-        "Name": "My Program",
-        "Exec": "/opt/rookery-programs/myprogram/bin/myprogram",
-        "Icon": "myprogram",
-        "Type": "Application",
-        "Categories": "Development;",
-    }  # Only if GUI application
+    # Only if GUI application. Build Exec from `config` so the entry follows
+    # ROOKERY_BIN_DIR instead of assuming the default install location.
+    @property
+    def desktop_entry_config(self) -> dict[str, str]:
+        return {
+            "Name": "My Program",
+            "Exec": f"{config.bin_dir / 'myprogram'}",
+            "Icon": "myprogram",
+            "Type": "Application",
+            "Categories": "Development;",
+        }
 
     def __init__(self) -> None:
         super().__init__()
@@ -74,15 +79,18 @@ man_page_files = {
 
 ## Desktop Entries
 
-Set `desktop_entry_config` for GUI applications only:
+Set `desktop_entry_config` for GUI applications only. Expose it as a property and
+build `Exec` from `config` so the entry follows `ROOKERY_BIN_DIR`:
 ```python
-desktop_entry_config = {
-    "Name": "Program Name",
-    "Exec": "/opt/rookery-programs/myprogram/bin/myprogram",
-    "Icon": "myprogram",
-    "Type": "Application",
-    "Categories": "Utility;",
-}
+@property
+def desktop_entry_config(self) -> dict[str, str]:
+    return {
+        "Name": "Program Name",
+        "Exec": f"{config.bin_dir / 'myprogram'}",
+        "Icon": "myprogram",
+        "Type": "Application",
+        "Categories": "Utility;",
+    }
 ```
 
 ## Version Management (list / exact-install / pin)

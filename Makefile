@@ -1,9 +1,9 @@
-.PHONY: clean build publish publish-test install dev lint format typecheck check
+.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check
 
 clean:
 	rm -rf dist/ build/ *.egg-info src/*.egg-info
-	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	find . -type f -name "*.pyc" -delete
+	find src tests -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find src tests -type f -name "*.pyc" -delete
 
 build: clean
 	uv build
@@ -22,13 +22,19 @@ install:
 dev:
 	uv sync --dev
 
+test:
+	uv run pytest
+
 lint:
 	uv run ruff check src/
 
 format:
 	uv run ruff format src/
 
+format-check:
+	uv run ruff format --check src/
+
 typecheck:
 	uv run mypy src/
 
-check: lint format typecheck
+check: lint format-check typecheck test

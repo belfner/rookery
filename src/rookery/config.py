@@ -96,7 +96,8 @@ class Config:
         """
         Maximum number of parallel install/update operations.
 
-        Reads from ROOKERY_MAX_PARALLEL env var, defaults to 4, clamped to minimum 1.
+        Reads from the ROOKERY_MAX_PARALLEL env var, using 10 when unset and 4 when the
+        value is not an integer. Clamped to a minimum of 1.
 
         Returns
         -------

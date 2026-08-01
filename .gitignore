@@ -16,3 +16,6 @@ tools/
 
 # Secrets
 .env
+
+# Timestamped .git backups from history rewrites
+.git.bak.*
