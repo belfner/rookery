@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from rookery.cli_helpers import RUN
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
 from rookery.operations import (
@@ -98,7 +99,7 @@ class McReleaseSource(GitHubReleaseSource):
         if not self._is_installable(resolution.upstream_id):
             raise ValueError(
                 f"mc {resolution.version} predates mc's prebuilt binaries. "
-                "Install a RELEASE.<timestamp> version; see `rookery versions mc`."
+                f"Install a RELEASE.<timestamp> version; see `{RUN} versions mc`."
             )
         return resolution
 

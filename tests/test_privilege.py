@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from rich.console import Console
 
 from rookery.privilege import (
     RootState,
+    _create_root,
     build_plan,
     inspect_install_root,
     preflight,
@@ -42,6 +44,7 @@ class TestInspectInstallRoot:
     def test_absent_root_under_protected_ancestor_needs_sudo(self) -> None:
         assert inspect_install_root(Path("/proc/rookery-does-not-exist")) is RootState.NEEDS_SUDO
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses mode bits, so BLOCKED cannot occur")
     def test_existing_unwritable_root_is_blocked(self, tmp_path: Path) -> None:
         root = tmp_path / "locked"
         root.mkdir()
@@ -55,23 +58,42 @@ class TestInspectInstallRoot:
 class TestBuildPlan:
     """Reason collection, including the --no-links boundary."""
 
-    def test_no_links_suppresses_integration_but_keeps_program_reason(self, tmp_path: Path, monkeypatch) -> None:
+    def test_no_links_keeps_system_program_reason(self, tmp_path: Path, monkeypatch) -> None:
         """A .deb program elevates through its package manager regardless of --no-links."""
+        monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
+
+        deb = _program("netron", SudoRequirement.REQUIRED)
+        without_links = build_plan([deb], create_links=False)
+
+        assert without_links.system_programs == ["netron"]
+        assert without_links.needs_sudo is True
+
+    def test_system_program_contributes_no_integration_paths(self, tmp_path: Path, monkeypatch) -> None:
+        """dpkg owns every path a .deb touches, so rookery's integration dirs are irrelevant."""
         monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
         monkeypatch.setattr("rookery.privilege.config.bin_dir", Path("/proc/protected-bin"))
 
-        deb = _program("netron", SudoRequirement.REQUIRED)
+        plan = build_plan([_program("netron", SudoRequirement.REQUIRED)], create_links=True)
 
-        with_links = build_plan([deb], create_links=True)
-        without_links = build_plan([deb], create_links=False)
+        assert plan.protected_paths == []
 
-        assert with_links.system_programs == ["netron"]
-        assert len(with_links.protected_paths) > 0
+    def test_no_links_suppresses_integration_reason_for_linked_program(self, tmp_path: Path, monkeypatch) -> None:
+        """An archive program's protected bin dir is a reason only when links are created."""
+        monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
+        monkeypatch.setattr("rookery.privilege.config.bin_dir", Path("/proc/protected-bin"))
+        monkeypatch.setattr("rookery.privilege.config.desktop_dir", tmp_path / "desktop")
+        monkeypatch.setattr("rookery.privilege.config.man_dir", tmp_path / "man")
 
-        # --no-links drops only the integration reason
-        assert without_links.system_programs == ["netron"]
+        # Declarative attribute: build_plan runs pre-install and must not touch disk
+        prog = _program("gdu", SudoRequirement.NOT_REQUIRED)
+        prog.binary_files = [Path("gdu")]
+
+        with_links = build_plan([prog], create_links=True)
+        without_links = build_plan([prog], create_links=False)
+
+        assert with_links.protected_paths == [Path("/proc/protected-bin")]
         assert without_links.protected_paths == []
-        assert without_links.needs_sudo is True
+        assert without_links.needs_sudo is False
 
     def test_archive_program_with_writable_paths_needs_nothing(self, tmp_path: Path, monkeypatch) -> None:
         monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
@@ -98,6 +120,7 @@ class TestPreflight:
 
         assert result is None
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses mode bits, so BLOCKED cannot occur")
     def test_blocked_root_exits_and_never_chowns(self, tmp_path: Path, monkeypatch) -> None:
         """An existing unwritable root must fail, not have its ownership taken."""
         root = tmp_path / "shared"
@@ -135,37 +158,81 @@ def test_blocked_classification_requires_non_root() -> None:
     assert os.geteuid() != 0
 
 
-class TestInvocationDetection:
-    """The prefix used when echoing commands back to the user."""
+class TestRootCreationRace:
+    """Creation must be exclusive so a concurrently created root is never chowned."""
 
-    def test_uv_cache_executable_suggests_uvx(self, tmp_path: Path, monkeypatch) -> None:
-        cache = tmp_path / "uvcache"
-        exe = cache / "archive-v0" / "abc" / "bin" / "rookery"
-        exe.parent.mkdir(parents=True)
-        exe.touch()
-        monkeypatch.setenv("UV_CACHE_DIR", str(cache))
-        monkeypatch.setattr("sys.argv", [str(exe)])
+    def test_lost_race_does_not_chown(self, tmp_path: Path, monkeypatch) -> None:
+        """A root that appears between inspection and creation belongs to its creator."""
+        root = tmp_path / "programs"
+        commands: list[list[str]] = []
 
-        from rookery.cli_helpers import _detect_invocation
+        class FakeSudo:
+            def run_as_root(self, command: list[str]) -> None:
+                commands.append(command)
+                # Simulate the competing process: the root now exists, so the
+                # exclusive `mkdir` (no -p) fails exactly as the real one would.
+                if command[0] == "mkdir" and "-p" not in command:
+                    root.mkdir(parents=True, exist_ok=True)
+                    raise subprocess.CalledProcessError(1, command)
 
-        assert _detect_invocation() == "uvx rookery"
+        created = _create_root(FakeSudo(), root)  # type: ignore[arg-type]
 
-    def test_executable_outside_cache_suggests_bare_command(self, tmp_path: Path, monkeypatch) -> None:
-        cache = tmp_path / "uvcache"
-        cache.mkdir()
-        exe = tmp_path / "tools" / "rookery" / "bin" / "rookery"
-        exe.parent.mkdir(parents=True)
-        exe.touch()
-        monkeypatch.setenv("UV_CACHE_DIR", str(cache))
-        monkeypatch.setattr("sys.argv", [str(exe)])
+        assert created is False
+        assert not any(c[0] == "chown" for c in commands), "must not chown a root it did not create"
 
-        from rookery.cli_helpers import _detect_invocation
+    def test_won_race_chowns(self, tmp_path: Path) -> None:
+        root = tmp_path / "programs"
+        commands: list[list[str]] = []
 
-        assert _detect_invocation() == "rookery"
+        class FakeSudo:
+            def run_as_root(self, command: list[str]) -> None:
+                commands.append(command)
 
-    def test_unresolvable_executable_falls_back_to_bare(self, monkeypatch) -> None:
-        monkeypatch.setattr("sys.argv", [""])
+        created = _create_root(FakeSudo(), root)  # type: ignore[arg-type]
 
-        from rookery.cli_helpers import _detect_invocation
+        assert created is True
+        assert any(c[0] == "chown" for c in commands)
+        # The final create must be exclusive, never `mkdir -p` on the root itself
+        final = [c for c in commands if c[0] == "mkdir" and str(root) in c]
+        assert all("-p" not in c for c in final), "final component must be created exclusively"
 
-        assert _detect_invocation() == "rookery"
+
+class TestInvalidRoot:
+    """A configured root that is not a directory is rejected, not used."""
+
+    def test_regular_file_is_invalid(self, tmp_path: Path) -> None:
+        target = tmp_path / "notadir"
+        target.write_text("")
+        assert inspect_install_root(target) is RootState.INVALID
+
+    def test_invalid_root_exits(self, tmp_path: Path, monkeypatch) -> None:
+        target = tmp_path / "notadir"
+        target.write_text("")
+        monkeypatch.setattr("rookery.privilege.config.install_dir", target)
+
+        with pytest.raises(typer.Exit):
+            preflight(Console(), [_program("gdu", SudoRequirement.NOT_REQUIRED)], create_links=False)
+
+
+class TestPreInstallSafety:
+    """build_plan runs before installation and must not depend on installed files."""
+
+    def test_plan_does_not_touch_uninstalled_binaries(self, tmp_path: Path, monkeypatch) -> None:
+        """Regression: get_binary_paths() raises FileNotFoundError before install."""
+        monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
+        monkeypatch.setattr("rookery.privilege.config.bin_dir", tmp_path / "bin")
+        monkeypatch.setattr("rookery.privilege.config.desktop_dir", tmp_path / "desktop")
+        monkeypatch.setattr("rookery.privilege.config.man_dir", tmp_path / "man")
+
+        prog = _program("gdu", SudoRequirement.NOT_REQUIRED)
+        prog.binary_files = [Path("gdu")]
+
+        def explode(self: object) -> list[Path]:
+            raise FileNotFoundError("binary is not installed yet")
+
+        monkeypatch.setattr(type(prog), "get_binary_paths", explode, raising=False)
+        monkeypatch.setattr(type(prog), "get_desktop_entry", explode, raising=False)
+
+        # Must not raise
+        plan = build_plan([prog], create_links=True)
+        assert plan.needs_sudo is False

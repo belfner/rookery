@@ -39,7 +39,7 @@ Rookery manages two kinds of program, and the difference shows up in where files
 
 - Rookery keeps only metadata under the install root; the payload is installed system-wide by apt
 - These need sudo on every install, update, and uninstall, because apt does
-- Uninstalling goes through dpkg
+- Uninstalling goes through apt
 
 The runner is ephemeral, the managed system is not. Clearing or refreshing uv's rookery cache does not touch installed programs, their state, or their links.
 
@@ -61,6 +61,12 @@ For a persistent install:
 uv tool install rookery
 uv tool upgrade rookery
 uv tool uninstall rookery
+```
+
+A persistent install can also set up shell completion:
+
+```bash
+rookery --install-completion
 ```
 
 Examples below use `uvx rookery`. If you installed rookery persistently, drop the `uvx` and run `rookery` directly.
@@ -86,7 +92,7 @@ export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"
 
 Keep that export in your shell startup. Rookery reads it on every invocation, so setting it for one command only would leave later commands looking at a different root.
 
-If rookery finds an install root that already exists but you cannot write to, it stops and asks you to choose a different root. It will not take ownership of a directory it did not create.
+If rookery finds an install root that already exists but you cannot write into, it stops and asks you to choose a different root. It takes ownership only of a root it created itself: the final directory is created exclusively, so a root that appeared concurrently is left to whoever made it.
 
 `--no-links` skips creating symlinks, desktop entries, and man page links. It does not avoid creating the install root, and it does not make a system-package program unprivileged.
 
@@ -179,11 +185,11 @@ A pin holds a program at its pinned version: `rookery update` skips pinned progr
 
 Rookery reads these on every invocation, so put any setting you want to keep in your shell startup rather than passing it to a single command.
 
-For the GitHub token, export it rather than putting it in a command, so it stays out of your shell history:
+Set the GitHub token in your shell startup or a credential helper rather than typing it into an interactive shell, where it would be recorded in history:
 
 ```bash
+# in ~/.bashrc or ~/.zshrc
 export GITHUB_TOKEN="..."
-uvx rookery versions nvim
 ```
 
 `uvx rookery info` shows which paths came from the environment and whether a token was found.
@@ -239,7 +245,7 @@ Without a token the GitHub API allows 60 requests per hour, which `rookery info`
 
 ## Development
 
-Preview the current branch without installing anything:
+Preview the repository's default branch without installing anything:
 
 ```bash
 uvx --from git+https://github.com/belfner/rookery.git rookery info

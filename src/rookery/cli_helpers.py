@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
 
 import typer
@@ -17,34 +15,16 @@ from rookery.path_utils import (
 from rookery.sudo import SudoManager
 
 
-def _detect_invocation() -> str:
-    """
-    Determine how to spell a rookery command back to the user.
+RUN = "uvx rookery"
+"""
+Spelling used when echoing a rookery command back to the user.
 
-    An ephemeral `uvx rookery` run executes from uv's cache, where the `rookery`
-    name is not on PATH, so suggested commands need the `uvx` prefix to be
-    runnable. Other launch styles (a uv tool install, a source checkout, a system
-    package) expose `rookery` directly. Detection claims `uvx` only when the
-    running executable is positively inside uv's cache, so an unrecognized layout
-    falls back to the plain command.
-
-    Returns
-    -------
-    str
-        Command prefix to use in user-facing hints.
-    """
-    cache_root = os.environ.get("UV_CACHE_DIR")
-    try:
-        cache = Path(cache_root).resolve() if cache_root is not None else (Path.home() / ".cache" / "uv").resolve()
-        executable = Path(sys.argv[0]).resolve()
-    except (OSError, RuntimeError):
-        return "rookery"
-
-    return "uvx rookery" if executable.is_relative_to(cache) else "rookery"
-
-
-RUN = _detect_invocation()
-"""Command prefix for user-facing hints, matching how rookery was launched."""
+`uvx rookery` runs in every documented mode: it resolves an ephemeral copy when
+rookery is not installed, and selects the installed tool when it is. A running
+executable's path identifies the environment it lives in rather than the command
+that launched it, so deriving the spelling from `sys.argv[0]` misreports several
+supported layouts; the one form that always works is used instead.
+"""
 
 
 def validate_sudo_or_exit(console: Console, skip_hint: str | None = None) -> SudoManager:

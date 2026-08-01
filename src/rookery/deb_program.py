@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.cli_helpers import RUN
 from rookery.github_program import GitHubProgram
 from rookery.link_status import LinkStatus
 from rookery.sudo_requirement import SudoRequirement
@@ -58,7 +59,7 @@ class DebProgram(GitHubProgram):
             Advisory text directing the user to apt-mark for a system-level hold.
         """
         return (
-            f"{self.name} is a system package. A rookery pin holds `rookery update`; "
+            f"{self.name} is a system package. A rookery pin holds `{RUN} update`; "
             f"`apt upgrade` can still move it. Run `sudo apt-mark hold {self.deb_package_name}` "
             "for a system-level hold."
         )

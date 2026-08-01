@@ -414,7 +414,7 @@ def update_command(
     Without arguments, updates all installed programs with available updates.
     Use --force to reinstall even if up to date.
     Use --yes/-y to skip confirmation prompt.
-    Use --no-links to skip creating system links (no sudo needed).
+    Use --no-links to skip creating system links. System-package programs can still require sudo.
     Use --no-downgrade to skip programs where installed version is newer than latest.
     """
     if program is not None:
@@ -457,13 +457,7 @@ def update_command(
             if not needs_update:
                 return
 
-            # Validate sudo based on program's sudo requirement and paths
-            if no_links:
-                sudo_mgr = None
-            elif prog.sudo_requirement == SudoRequirement.REQUIRED:
-                sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: This program requires sudo for installation")
-            else:
-                sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+            sudo_mgr = preflight(console, [prog], create_links=not no_links)
 
             success, attempted, _version = asyncio.run(
                 update_program(
@@ -608,16 +602,7 @@ def update_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        # Check if any programs require sudo for installation
-        requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_update)
-
-        # Validate sudo based on program requirements and paths
-        if no_links:
-            sudo_mgr = None
-        elif requires_sudo_programs:
-            sudo_mgr = validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for installation")
-        else:
-            sudo_mgr = validate_sudo_if_needed(console, skip_hint="Hint: Use --no-links to skip system integration")
+        sudo_mgr = preflight(console, programs_to_update, create_links=not no_links)
 
         asyncio.run(
             update_programs(
@@ -685,7 +670,7 @@ def uninstall_command(
 
     Without arguments, does nothing. Use --all to uninstall all installed programs.
     Removes program files and system links (symlinks, desktop entries, man pages).
-    Use --no-links to skip removing system links (no sudo needed).
+    Use --no-links to skip removing system links. System-package programs can still require sudo.
     """
     if (program is None) and not all_flag:
         console.print("[yellow]Please specify a program name or use --all[/]")

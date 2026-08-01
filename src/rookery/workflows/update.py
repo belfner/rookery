@@ -14,6 +14,7 @@ from rich.progress import (
     TextColumn,
 )
 
+from rookery.cli_helpers import RUN
 from rookery.config import config
 from rookery.program import (
     Program,
@@ -107,8 +108,8 @@ async def update_program(
                     console.print(
                         f"[yellow]{program.name} is pinned to {pin_selector}; "
                         f"latest is {meta.latest_version}. "
-                        f"Use `rookery unpin {program.name}` or "
-                        f"`rookery install {program.name}@VERSION --pin`.[/]"
+                        f"Use `{RUN} unpin {program.name}` or "
+                        f"`{RUN} install {program.name}@VERSION --pin`.[/]"
                     )
                 return (False, False, "")
 
@@ -117,7 +118,7 @@ async def update_program(
             if resolution is None:
                 console.print(
                     f"[red]✗ {program.name} pin and installed state have drifted; "
-                    f"run `rookery install {program.name}@{pin_selector} --pin` to repair.[/]"
+                    f"run `{RUN} install {program.name}@{pin_selector} --pin` to repair.[/]"
                 )
                 return (False, True, "")
 
