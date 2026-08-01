@@ -14,10 +14,9 @@ class MyProgram(Program):
     program_name = "myprogram"
     binary_files = [Path("bin/myprogram")]
     man_page_files = {"man1": Path("share/man/man1/myprogram.1")}
-    # Only if GUI application. Build Exec from `config` so the entry follows
-    # ROOKERY_BIN_DIR instead of assuming the default install location.
-    @property
-    def desktop_entry_config(self) -> dict[str, str]:
+    # Only if GUI application. Override get_desktop_entry() and build Exec from
+    # `config` so the entry follows ROOKERY_BIN_DIR.
+    def get_desktop_entry(self) -> dict[str, str] | None:
         return {
             "Name": "My Program",
             "Exec": f"{config.bin_dir / 'myprogram'}",
@@ -79,11 +78,10 @@ man_page_files = {
 
 ## Desktop Entries
 
-Set `desktop_entry_config` for GUI applications only. Expose it as a property and
-build `Exec` from `config` so the entry follows `ROOKERY_BIN_DIR`:
+For GUI applications, override `get_desktop_entry()` and build `Exec` from `config`
+so the entry follows `ROOKERY_BIN_DIR`:
 ```python
-@property
-def desktop_entry_config(self) -> dict[str, str]:
+def get_desktop_entry(self) -> dict[str, str] | None:
     return {
         "Name": "Program Name",
         "Exec": f"{config.bin_dir / 'myprogram'}",
@@ -92,6 +90,10 @@ def desktop_entry_config(self) -> dict[str, str]:
         "Categories": "Utility;",
     }
 ```
+
+Programs whose desktop entry needs no runtime values can instead set the
+`desktop_entry_config` class attribute, which the default `get_desktop_entry()`
+returns when the program has binaries.
 
 ## Version Management (list / exact-install / pin)
 
