@@ -10,12 +10,18 @@ import pytest
 import typer
 from rich.console import Console
 
+from rookery.path_utils import is_path_writable
 from rookery.privilege import (
     RootState,
     _create_root,
     build_plan,
     inspect_install_root,
     preflight,
+    untrusted_component,
+)
+from rookery.registry import (
+    get_program,
+    list_programs,
 )
 from rookery.sudo_requirement import SudoRequirement
 from tests.conftest import DummyProgram
@@ -236,3 +242,137 @@ class TestPreInstallSafety:
         # Must not raise
         plan = build_plan([prog], create_links=True)
         assert plan.needs_sudo is False
+
+
+class TestPathWritability:
+    """Creating an entry needs write AND search permission on the holder."""
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses mode bits")
+    def test_write_only_ancestor_cannot_hold_entries(self, tmp_path: Path) -> None:
+        """A directory with write but no search permission cannot be traversed."""
+        wo = tmp_path / "writeonly"
+        wo.mkdir()
+        wo.chmod(0o200)
+        try:
+            assert is_path_writable(wo / "child") is False
+        finally:
+            wo.chmod(0o700)
+
+    def test_existing_regular_file_is_not_writable(self, tmp_path: Path) -> None:
+        target = tmp_path / "afile"
+        target.write_text("")
+        assert is_path_writable(target) is False
+
+    def test_normal_directory_and_missing_children_are_writable(self, tmp_path: Path) -> None:
+        assert is_path_writable(tmp_path) is True
+        assert is_path_writable(tmp_path / "child") is True
+        assert is_path_writable(tmp_path / "a" / "b" / "c") is True
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root bypasses mode bits")
+    def test_unsearchable_ancestor_returns_false_rather_than_raising(self, tmp_path: Path) -> None:
+        """Regression: Path.exists() propagates EACCES when a parent is not searchable."""
+        wo = tmp_path / "writeonly"
+        wo.mkdir()
+        wo.chmod(0o200)
+        try:
+            assert is_path_writable(wo / "deep" / "nested") is False
+        finally:
+            wo.chmod(0o700)
+
+
+class TestCreateRootFailureDiagnosis:
+    """A failed mkdir is only a lost race when the root actually appeared."""
+
+    def test_real_failure_raises_rather_than_reporting_lost_race(self, tmp_path: Path) -> None:
+        class AlwaysFails:
+            def run_as_root(self, command: list[str]) -> None:
+                if command[0] == "mkdir" and "-p" not in command:
+                    raise subprocess.CalledProcessError(1, command)
+
+        with pytest.raises(RuntimeError):
+            _create_root(AlwaysFails(), tmp_path / "nope")  # type: ignore[arg-type]
+
+
+class TestLinkCapabilities:
+    """Capability reporting must use real program classes, not a populated DummyProgram."""
+
+    @pytest.mark.parametrize("name", ["tarssh", "kpod", "cuda-run", "fasttarutils", "fastziputils"])
+    def test_shell_script_programs_report_binaries(self, name: str) -> None:
+        """Regression: these derive binaries from `scripts`, so binary_files is empty."""
+        prog = get_program(name)
+        assert len(prog.binary_files) == 0, "precondition: declarative list really is empty"
+        assert prog.link_capabilities.binaries is True
+
+    def test_yazi_reports_dynamic_man_pages(self) -> None:
+        prog = get_program("yazi")
+        assert len(prog.man_page_files) == 0, "precondition: man pages are discovered, not declared"
+        assert prog.link_capabilities.man_pages is True
+
+    @pytest.mark.parametrize("name", ["drawio", "blender", "storageexplorer"])
+    def test_dynamic_desktop_programs_report_desktop(self, name: str) -> None:
+        prog = get_program(name)
+        assert prog.desktop_entry_config is None, "precondition: entry is built at runtime"
+        assert prog.link_capabilities.desktop is True
+
+    def test_system_package_program_requests_no_rookery_paths(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
+        monkeypatch.setattr("rookery.privilege.config.bin_dir", Path("/proc/protected-bin"))
+        plan = build_plan([get_program("netron")], create_links=True)
+        assert plan.protected_paths == []
+
+    def test_capabilities_are_pure_before_install(self) -> None:
+        """Every catalog program must answer without touching the filesystem."""
+        for prog in list_programs():
+            caps = prog.link_capabilities  # must not raise for uninstalled programs
+            assert isinstance(caps.binaries, bool)
+
+    def test_shell_script_program_selects_protected_bin_dir(self, tmp_path: Path, monkeypatch) -> None:
+        monkeypatch.setattr("rookery.privilege.config.install_dir", tmp_path)
+        monkeypatch.setattr("rookery.privilege.config.bin_dir", Path("/proc/protected-bin"))
+        monkeypatch.setattr("rookery.privilege.config.man_dir", tmp_path / "man")
+        monkeypatch.setattr("rookery.privilege.config.desktop_dir", tmp_path / "desktop")
+
+        plan = build_plan([get_program("tarssh")], create_links=True)
+
+        assert plan.protected_paths == [Path("/proc/protected-bin")]
+        assert plan.needs_sudo is True
+
+
+class TestTrustedChain:
+    """Privileged creation is refused unless the whole existing chain is root-controlled."""
+
+    def test_root_owned_chain_is_trusted(self) -> None:
+        # /usr/local is root-owned 0755 on a normal system
+        assert untrusted_component(Path("/usr/local/rookery-nonexistent")) is None
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="ownership assertions assume a non-root user")
+    def test_user_owned_ancestor_is_untrusted(self, tmp_path: Path) -> None:
+        """A user-writable ancestor lets another account replace the created directory."""
+        found = untrusted_component(tmp_path / "programs")
+        assert found is not None
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="ownership assertions assume a non-root user")
+    def test_root_owned_leaf_below_untrusted_ancestor_is_rejected(self, tmp_path: Path) -> None:
+        """Checking only the nearest ancestor is insufficient: parents can be replaced."""
+        # tmp_path is user-owned; anything beneath it is untrusted however it looks
+        nested = tmp_path / "a" / "b"
+        nested.mkdir(parents=True)
+        assert untrusted_component(nested / "root") is not None
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="ownership assertions assume a non-root user")
+    def test_preflight_refuses_privileged_creation_under_untrusted_chain(self, tmp_path: Path, monkeypatch) -> None:
+        """NEEDS_SUDO plus an untrusted chain must exit before any sudo prompt."""
+        target = tmp_path / "programs"
+        monkeypatch.setattr("rookery.privilege.config.install_dir", target)
+        monkeypatch.setattr("rookery.privilege.inspect_install_root", lambda _p: RootState.NEEDS_SUDO)
+
+        validated: list[str] = []
+        monkeypatch.setattr(
+            "rookery.privilege.SudoManager.validate_and_cache",
+            lambda self: validated.append("called") or True,
+        )
+
+        with pytest.raises(typer.Exit):
+            preflight(Console(), [_program("gdu", SudoRequirement.NOT_REQUIRED)], create_links=False)
+
+        assert validated == [], "must refuse before prompting for sudo"

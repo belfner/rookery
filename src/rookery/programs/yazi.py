@@ -20,6 +20,7 @@ from rookery.operations import (
     InstallOperation,
     MakeExecutable,
 )
+from rookery.program import LinkCapabilities
 
 
 class YaziProgram(GitHubProgram):
@@ -32,6 +33,23 @@ class YaziProgram(GitHubProgram):
     man_page_repo = "yazi-rs/manpages"
     # Exact install also needs the version-matched manpage commit; deferred to v2.
     github_supports_exact = False
+
+    @property
+    def link_capabilities(self) -> LinkCapabilities:
+        """
+        Man pages are discovered from the extracted archive rather than declared.
+
+        Returns
+        -------
+        LinkCapabilities
+            Declarative capabilities with man_pages forced on.
+        """
+        base = super().link_capabilities
+        return LinkCapabilities(
+            binaries=base.binaries,
+            man_pages=True,
+            desktop=base.desktop,
+        )
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """

@@ -13,6 +13,7 @@ from rookery.operations import (
     InstallOperation,
     MakeExecutable,
 )
+from rookery.program import LinkCapabilities
 
 
 class DrawioProgram(AppImageProgram):
@@ -22,6 +23,23 @@ class DrawioProgram(AppImageProgram):
     program_name = "drawio"
     github_repo = "jgraph/drawio-desktop"
     binary_files = [Path("drawio")]
+
+    @property
+    def link_capabilities(self) -> LinkCapabilities:
+        """
+        The desktop entry is built at runtime from the configured bin directory.
+
+        Returns
+        -------
+        LinkCapabilities
+            Declarative capabilities with desktop forced on.
+        """
+        base = super().link_capabilities
+        return LinkCapabilities(
+            binaries=base.binaries,
+            man_pages=base.man_pages,
+            desktop=True,
+        )
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """

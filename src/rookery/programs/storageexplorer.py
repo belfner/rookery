@@ -14,7 +14,10 @@ from rookery.operations import (
     ExtractArchive,
     InstallOperation,
 )
-from rookery.program import Program
+from rookery.program import (
+    LinkCapabilities,
+    Program,
+)
 from rookery.sudo_requirement import SudoRequirement
 from rookery.version_sources import GitHubReleaseSource
 
@@ -26,6 +29,23 @@ class StorageExplorerProgram(Program):
     program_name = "storageexplorer"
     sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("StorageExplorer/StorageExplorer")]
+
+    @property
+    def link_capabilities(self) -> LinkCapabilities:
+        """
+        The desktop entry is built at runtime from the configured bin directory.
+
+        Returns
+        -------
+        LinkCapabilities
+            Declarative capabilities with desktop forced on.
+        """
+        base = super().link_capabilities
+        return LinkCapabilities(
+            binaries=base.binaries,
+            man_pages=base.man_pages,
+            desktop=True,
+        )
 
     def __init__(self) -> None:
         """Initialize Azure Storage Explorer program."""

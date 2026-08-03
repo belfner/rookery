@@ -8,26 +8,37 @@ from pathlib import Path
 
 def is_path_writable(path: Path) -> bool:
     """
-    Check if path or its parent directory is writable by current user.
+    Check whether entries can be created at a path by the current user.
+
+    Creating an entry inside a directory needs both write and search permission, so a
+    write-only directory that cannot be traversed does not qualify. An existing path
+    that is not a directory cannot hold entries at all.
 
     Parameters
     ----------
     path : Path
-        Path to check for writability.
+        Path to check.
 
     Returns
     -------
     bool
-        True if path exists and is writable, or if parent exists and is writable.
+        True when the path, or the nearest existing ancestor, can hold new entries.
     """
-    # If path exists, check if it's writable
-    if path.exists():
-        return os.access(path, os.W_OK)
+    # A path whose ancestor cannot be searched raises rather than answering, which for
+    # this question is the same as "entries cannot be created here".
+    try:
+        # If path exists, it must be a directory this user can write into and traverse
+        if path.exists():
+            return path.is_dir() and os.access(path, os.W_OK | os.X_OK)
 
-    # If path doesn't exist, check parent directory
+        # If path doesn't exist, check parent directory
+        parent = path.parent
+        if parent.exists():
+            return parent.is_dir() and os.access(parent, os.W_OK | os.X_OK)
+    except OSError:
+        return False
+
     parent = path.parent
-    if parent.exists():
-        return os.access(parent, os.W_OK)
 
     # Recursively check parent's parent
     return is_path_writable(parent)

@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from rookery.operations import InstallOperation
-from rookery.program import Program
+from rookery.program import (
+    LinkCapabilities,
+    Program,
+)
 from rookery.sudo_requirement import SudoRequirement
 from rookery.version_sources import StaticVersionSource
 
@@ -30,6 +33,23 @@ class ShellScriptProgram(Program):
     sudo_requirement: SudoRequirement = SudoRequirement.NOT_REQUIRED
     scripts: dict[str, str] = {}
     man_pages: dict[str, str] = {}
+
+    @property
+    def link_capabilities(self) -> LinkCapabilities:
+        """
+        Artifacts derived from the bundled scripts rather than declarative attributes.
+
+        Returns
+        -------
+        LinkCapabilities
+            Binaries when scripts are bundled, man pages when man content is bundled.
+        """
+        base = super().link_capabilities
+        return LinkCapabilities(
+            binaries=len(self.scripts) > 0,
+            man_pages=len(self.man_pages) > 0,
+            desktop=base.desktop,
+        )
 
     def __init__(self) -> None:
         """Initialize shell-script program with a static version source."""

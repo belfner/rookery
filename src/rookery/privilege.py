@@ -9,8 +9,8 @@ at most one :class:`SudoManager` that callers reuse.
 from __future__ import annotations
 
 import getpass
-import grp
 import os
+import stat
 import subprocess
 from dataclasses import (
     dataclass,
@@ -98,29 +98,6 @@ class PrivilegePlan:
         return self.creates_root or len(self.system_programs) > 0 or len(self.protected_paths) > 0
 
 
-def _may_create_desktop_entry(program: Program) -> bool:
-    """
-    Report whether a program can produce a desktop entry, without touching the disk.
-
-    A program either declares `desktop_entry_config` or overrides `get_desktop_entry`.
-    The override cannot be called here because it inspects installed binaries, so its
-    presence is detected instead.
-
-    Parameters
-    ----------
-    program : Program
-        Program to check.
-
-    Returns
-    -------
-    bool
-        True when the program may produce a desktop entry.
-    """
-    if program.desktop_entry_config is not None:
-        return True
-    return type(program).get_desktop_entry is not Program.get_desktop_entry
-
-
 def build_plan(programs: list[Program], create_links: bool) -> PrivilegePlan:
     """
     Collect every elevation reason for a command.
@@ -149,16 +126,15 @@ def build_plan(programs: list[Program], create_links: bool) -> PrivilegePlan:
         # Only the integration directories the selected programs will actually write to.
         # A system-package program is excluded entirely, since its package manager owns
         # every path it touches.
-        # Declarative attributes only. The preflight runs before installation, so
-        # get_binary_paths() and get_desktop_entry() would raise on files that do
-        # not exist yet.
-        rookery_linked = [p for p in programs if p.sudo_requirement is not SudoRequirement.REQUIRED]
+        # Program.link_capabilities answers before installation without touching the
+        # filesystem, so the path-resolving getters are never called here.
+        rookery_linked = [p.link_capabilities for p in programs if p.sudo_requirement is not SudoRequirement.REQUIRED]
         needed: list[Path] = []
-        if any(len(p.binary_files) > 0 for p in rookery_linked):
+        if any(cap.binaries for cap in rookery_linked):
             needed.append(config.bin_dir)
-        if any(len(p.man_page_files) > 0 for p in rookery_linked):
+        if any(cap.man_pages for cap in rookery_linked):
             needed.append(config.man_dir)
-        if any(_may_create_desktop_entry(p) for p in rookery_linked):
+        if any(cap.desktop for cap in rookery_linked):
             needed.append(config.desktop_dir)
 
         plan.protected_paths = [path for path in needed if not is_path_writable(path)]
@@ -220,13 +196,61 @@ def _explain(console: Console, plan: PrivilegePlan) -> None:
             )
 
 
+def untrusted_component(root: Path) -> Path | None:
+    """
+    Find the first component of an existing path chain that a non-root account controls.
+
+    Privileged creation followed by a path-based ownership transfer is only safe when no
+    unprivileged account can replace the created directory beforehand. That requires the
+    whole existing chain to be trusted, not just the nearest ancestor: a root-owned
+    directory can itself be renamed if one of its own parents is writable by someone else.
+
+    A component is trusted when it is a directory, owned by uid 0, and writable by
+    neither group nor other.
+
+    Parameters
+    ----------
+    root : Path
+        Canonical path whose existing ancestors are checked.
+
+    Returns
+    -------
+    Path | None
+        The first untrusted component, or None when the whole chain is trusted.
+    """
+    existing = root
+    while not existing.exists():
+        parent = existing.parent
+        if parent == existing:
+            break
+        existing = parent
+
+    for component in [existing, *existing.parents]:
+        try:
+            info = component.lstat()
+        except OSError:
+            return component
+        if not stat.S_ISDIR(info.st_mode):
+            return component
+        if info.st_uid != 0:
+            return component
+        if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            return component
+
+    return None
+
+
 def _create_root(sudo_mgr: SudoManager, root: Path) -> bool:
     """
     Create the install root under elevation and give it to the current user.
 
-    The final component is created with a plain ``mkdir``, which fails when the path
-    already exists. Ownership is transferred only after that exclusive create succeeds,
-    so a root produced by a concurrent process is never chowned.
+    Callers must have established that the existing chain is trusted, so no unprivileged
+    account can replace the created directory between creation and the ownership
+    transfer. The final component is created with a plain ``mkdir``, which fails when the
+    path already exists, and ownership moves only after that exclusive create succeeds.
+
+    Missing intermediate directories stay root-owned; only the final root is handed to
+    the invoking user, identified by numeric uid and gid rather than an environment name.
 
     Parameters
     ----------
@@ -239,19 +263,27 @@ def _create_root(sudo_mgr: SudoManager, root: Path) -> bool:
     -------
     bool
         True when this call created the root, False when another process won the race.
+
+    Raises
+    ------
+    RuntimeError
+        Creation failed for a reason other than the path already existing.
     """
     parent = root.parent
     if not parent.exists():
-        sudo_mgr.run_as_root(["mkdir", "-p", str(parent)])
+        sudo_mgr.run_as_root(["mkdir", "-p", "-m", "0755", str(parent)])
 
     try:
-        sudo_mgr.run_as_root(["mkdir", str(root)])
-    except subprocess.CalledProcessError:
+        sudo_mgr.run_as_root(["mkdir", "-m", "0755", "--", str(root)])
+    except subprocess.CalledProcessError as exc:
+        # Only an already-existing path means another process created the root first.
+        # Anything else (a read-only filesystem, a missing parent) is a real failure and
+        # must not be reported as a lost race.
+        if not root.exists():
+            raise RuntimeError(f"Could not create install root {root}") from exc
         return False
 
-    user = getpass.getuser()
-    group = grp.getgrgid(os.getgid()).gr_name
-    sudo_mgr.run_as_root(["chown", f"{user}:{group}", str(root)])
+    sudo_mgr.run_as_root(["chown", f"{os.getuid()}:{os.getgid()}", "--", str(root)])
     return True
 
 
@@ -301,6 +333,19 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
             "[dim]or have an administrator grant you access to the existing path.[/]\n"
         )
         raise typer.Exit(1)
+
+    if plan.creates_root:
+        untrusted = untrusted_component(plan.root)
+        if untrusted is not None:
+            console.print(
+                f"\n[red]Error: rookery will not create {plan.root} with sudo.[/]\n"
+                f"[yellow]{untrusted} is writable by an account other than root, so another\n"
+                "user could replace the new directory before rookery hands it to you.[/]\n"
+                "[dim]Choose a root under a root-owned path such as /opt, or one you can\n"
+                "create yourself:[/]\n"
+                '[dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
+            )
+            raise typer.Exit(1)
 
     if not plan.needs_sudo:
         return None

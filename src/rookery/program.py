@@ -38,6 +38,33 @@ if TYPE_CHECKING:
     from rookery.link_status import LinkStatus
 
 
+@dataclass(frozen=True)
+class LinkCapabilities:
+    """
+    Which kinds of integration artifact a program may create.
+
+    Answers must be available before installation, so implementations are pure: no
+    filesystem access, no calls to the path-resolving getters, no dependence on
+    installation state. False guarantees the program will not ask SystemLinker to
+    create that artifact; True means it may create at least one. A false positive
+    costs an unnecessary privilege check, while a false negative is a privilege
+    planning bug, so implementations round up when unsure.
+
+    Attributes
+    ----------
+    binaries : bool
+        The program may create command symlinks.
+    man_pages : bool
+        The program may install man pages.
+    desktop : bool
+        The program may create a desktop entry.
+    """
+
+    binaries: bool = False
+    man_pages: bool = False
+    desktop: bool = False
+
+
 @dataclass
 class ProgramMetadata:
     """Program version and update status information."""
@@ -101,6 +128,27 @@ class Program(ABC):
         self.name = self.program_name
         self.install_dir = config.install_dir / self.name
         self.version_file = self.install_dir / ".version"
+
+    @property
+    def link_capabilities(self) -> LinkCapabilities:
+        """
+        Integration artifacts this program may create, answerable before installation.
+
+        Subclasses that derive artifacts from anything other than the declarative
+        attributes must override this. A subclass adding a dynamic getter without a
+        matching override under-reports its needs, which shows up as a missing
+        privilege check rather than a visible error.
+
+        Returns
+        -------
+        LinkCapabilities
+            Conservative description of the artifacts this program may create.
+        """
+        return LinkCapabilities(
+            binaries=len(self.binary_files) > 0,
+            man_pages=len(self.man_page_files) > 0,
+            desktop=self.desktop_entry_config is not None,
+        )
 
     def _ensure_install_dir(self) -> None:
         """
