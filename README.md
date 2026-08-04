@@ -77,11 +77,12 @@ Two things that sound similar but are not: `rookery update` updates the programs
 
 On a fresh machine the install root `/opt/rookery-programs` does not exist yet, and `/opt` is owned by root. Rookery creates that directory once, then hands ownership to you, so ordinary installs afterwards need no password. It tells you this before prompting.
 
-Sudo is still required in three cases:
+Sudo is required in two cases:
 
-- Installing, updating, or removing a system-package program such as netron, because apt needs it every time
-- Writing to integration directories you don't own, if you have pointed `ROOKERY_BIN_DIR`, `ROOKERY_DESKTOP_DIR`, or `ROOKERY_MAN_DIR` somewhere protected
 - Creating the install root, the one-time case above
+- Installing, updating, or removing a system-package program such as netron, because apt needs it every time
+
+Nothing else elevates. Symlinks, desktop entries, and man pages are always written as you, even during a command that needed sudo for one of the reasons above.
 
 To skip the install-root prompt entirely, put the root somewhere you already own:
 
@@ -176,14 +177,16 @@ A pin holds a program at its pinned version: `rookery update` skips pinned progr
 | Variable | Description |
 |----------|-------------|
 | `ROOKERY_INSTALL_DIR` | Installation directory (default: `/opt/rookery-programs`). Point this somewhere you own to avoid the one-time sudo prompt |
-| `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`) |
-| `ROOKERY_DESKTOP_DIR` | Desktop entry directory |
-| `ROOKERY_MAN_DIR` | Man page directory |
+| `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`). Must be writable by you |
+| `ROOKERY_DESKTOP_DIR` | Desktop entry directory. Must be writable by you |
+| `ROOKERY_MAN_DIR` | Man page directory. Must be writable by you |
 | `ROOKERY_TEMP_DIR` | Download staging directory (default: `/tmp/rookery`) |
 | `ROOKERY_MAX_PARALLEL` | Concurrency limit for batch installs and updates (default: 10) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token, lifting the anonymous 60 requests/hour limit |
 
 Rookery reads these on every invocation, so put any setting you want to keep in your shell startup rather than passing it to a single command.
+
+The three integration directories must be writable by you. Rookery does not create system-owned integration paths, and it reports a configuration error rather than elevating to write into one. Pointing them at a system location such as `/usr/local/bin` is not supported; use `--no-links` and link manually if you need that.
 
 Set the GitHub token in your shell startup or a credential helper rather than typing it into an interactive shell, where it would be recorded in history:
 

@@ -8,15 +8,23 @@ from contextlib import suppress
 from pathlib import Path
 
 from rookery.config import config
+from rookery.path_utils import is_path_writable
 from rookery.program import Program
 from rookery.sudo import SudoManager
 
 
+class IntegrationPermissionError(Exception):
+    """A destination needs elevation that the caller did not validate."""
+
+
 class SystemLinker:
     """
-    Manages system-wide symlinks and desktop entries.
+    Manages symlinks, desktop entries, and man page links.
 
-    Requires root privileges for /usr/local/bin/ and /usr/share/applications/.
+    Integration directories are expected to be writable by the invoking user; the
+    defaults under ``~/.local`` always are. Elevation is chosen per destination, so a
+    sudo manager validated for some other reason, such as creating the install root,
+    does not cause user-owned paths to be written as root.
     """
 
     def __init__(
@@ -45,13 +53,47 @@ class SystemLinker:
         self.man_dir = man_dir if man_dir is not None else config.man_dir
         self.sudo_manager = sudo_manager
 
-        # Ensure user-local directories exist if using user-writable paths
+        # Create the integration directories themselves, not their parents, and do so
+        # whether or not a manager was supplied: a manager validated for the install
+        # root says nothing about these paths.
+        for dir_path in [self.bin_dir, self.desktop_dir, self.man_dir]:
+            if not dir_path.exists() and is_path_writable(dir_path):
+                with suppress(OSError):
+                    dir_path.mkdir(parents=True, exist_ok=True)
+
+    def _elevate(self, path: Path) -> SudoManager | None:
+        """
+        Decide whether writing an entry at a path needs the validated manager.
+
+        Need and availability are separate questions. A destination whose containing
+        directory the user can write is never elevated, even when a manager exists for
+        an unrelated reason. A destination that does need elevation without a validated
+        manager is a disagreement between the privilege plan and this linker, and is
+        raised rather than attempted.
+
+        Parameters
+        ----------
+        path : Path
+            Entry being created, replaced, or removed.
+
+        Returns
+        -------
+        SudoManager | None
+            The manager when the operation must be elevated, None otherwise.
+
+        Raises
+        ------
+        IntegrationPermissionError
+            The destination requires elevation and no manager was validated.
+        """
+        if is_path_writable(path.parent):
+            return None
         if self.sudo_manager is None:
-            for dir_path in [self.bin_dir, self.desktop_dir.parent, self.man_dir]:
-                if not dir_path.exists():
-                    with suppress(PermissionError):
-                        # Will fail later when trying to create links
-                        dir_path.mkdir(parents=True, exist_ok=True)
+            raise IntegrationPermissionError(
+                f"{path.parent} is not writable by you. Set the matching ROOKERY_*_DIR "
+                "to a directory you own, or pass --no-links to skip system integration."
+            )
+        return self.sudo_manager
 
     def create_binary_symlink(self, target: Path, name: str | None = None) -> None:
         """
@@ -69,13 +111,14 @@ class SystemLinker:
 
         link_path = self.bin_dir / name
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(link_path)
+        if manager is not None:
             # Remove existing symlink
             if link_path.exists() or link_path.is_symlink():
-                self.sudo_manager.run_as_root(["rm", "-f", str(link_path)])
+                manager.run_as_root(["rm", "-f", str(link_path)])
 
             # Create new symlink
-            self.sudo_manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
+            manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
         else:
             # Direct operation (for testing or when already root)
             if link_path.exists() or link_path.is_symlink():
@@ -104,15 +147,16 @@ class SystemLinker:
             content.append(f"{key}={value}")
         content_str = "\n".join(content) + "\n"
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(desktop_file)
+        if manager is not None:
             # Write to temp file, then move with sudo
             with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".desktop") as tmp:
                 tmp.write(content_str)
                 tmp_path = tmp.name
 
             try:
-                self.sudo_manager.run_as_root(["mv", tmp_path, str(desktop_file)])
-                self.sudo_manager.run_as_root(["chmod", "644", str(desktop_file)])
+                manager.run_as_root(["mv", tmp_path, str(desktop_file)])
+                manager.run_as_root(["chmod", "644", str(desktop_file)])
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
         else:
@@ -152,17 +196,18 @@ class SystemLinker:
         section_dir = self.man_dir / actual_section
         link_path = section_dir / target.name
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(link_path)
+        if manager is not None:
             # Create section directory if needed
             if not section_dir.exists():
-                self.sudo_manager.run_as_root(["mkdir", "-p", str(section_dir)])
+                manager.run_as_root(["mkdir", "-p", str(section_dir)])
 
             # Remove existing symlink
             if link_path.exists() or link_path.is_symlink():
-                self.sudo_manager.run_as_root(["rm", "-f", str(link_path)])
+                manager.run_as_root(["rm", "-f", str(link_path)])
 
             # Create new symlink
-            self.sudo_manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
+            manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
         else:
             # Direct operation
             section_dir.mkdir(parents=True, exist_ok=True)
@@ -194,9 +239,10 @@ class SystemLinker:
         if not link_path.is_symlink():
             return False
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(link_path)
+        if manager is not None:
             try:
-                self.sudo_manager.run_as_root(["rm", "-f", str(link_path)])
+                manager.run_as_root(["rm", "-f", str(link_path)])
                 return True
             except subprocess.CalledProcessError:
                 return False
@@ -239,9 +285,10 @@ class SystemLinker:
         if not (link_path.is_symlink() or link_path.exists()):
             return False
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(link_path)
+        if manager is not None:
             try:
-                self.sudo_manager.run_as_root(["rm", "-f", str(link_path)])
+                manager.run_as_root(["rm", "-f", str(link_path)])
                 return True
             except subprocess.CalledProcessError:
                 return False
@@ -268,9 +315,10 @@ class SystemLinker:
         if not desktop_file.exists():
             return False
 
-        if self.sudo_manager is not None:
+        manager = self._elevate(desktop_file)
+        if manager is not None:
             try:
-                self.sudo_manager.run_as_root(["rm", "-f", str(desktop_file)])
+                manager.run_as_root(["rm", "-f", str(desktop_file)])
                 return True
             except subprocess.CalledProcessError:
                 return False

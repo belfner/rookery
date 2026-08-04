@@ -1,9 +1,13 @@
 """Privilege preflight: decide, explain, and validate sudo once per command.
 
 Collects every independent reason a command may need elevation (creating the shared
-install root, installing a program that uses a system package manager, writing to a
-protected integration directory), explains each reason before prompting, and validates
-at most one :class:`SudoManager` that callers reuse.
+install root, installing a program that uses a system package manager), explains each
+reason before prompting, and validates at most one :class:`SudoManager` that callers
+reuse.
+
+Integration directories are required to be writable by the invoking user. One that is
+not is reported as a configuration error rather than satisfied with elevation, so a
+validated manager never becomes a licence to write into paths the user does not own.
 """
 
 from __future__ import annotations
@@ -79,7 +83,8 @@ class PrivilegePlan:
     system_programs : list[str]
         Names of programs whose installation itself requires elevation.
     protected_paths : list[Path]
-        Integration directories that are not writable by the current user.
+        Integration directories that are not writable by the current user. Their
+        presence is a configuration error, not a reason to elevate.
     """
 
     root: Path
@@ -95,16 +100,19 @@ class PrivilegePlan:
     @property
     def needs_sudo(self) -> bool:
         """Whether any collected reason requires elevation."""
-        return self.creates_root or len(self.system_programs) > 0 or len(self.protected_paths) > 0
+        return self.creates_root or len(self.system_programs) > 0
 
 
 def build_plan(programs: list[Program], create_links: bool) -> PrivilegePlan:
     """
     Collect every elevation reason for a command.
 
-    ``create_links`` suppresses only the integration-path reason. A program that
-    requires elevation to install keeps that reason regardless, because its package
-    manager elevates independently of link creation.
+    ``create_links`` suppresses only the integration-path check. A program that requires
+    elevation to install keeps that reason regardless, because its package manager
+    elevates independently of link creation.
+
+    Protected integration directories are collected so the caller can reject them; they
+    are not an elevation reason.
 
     Parameters
     ----------
@@ -172,15 +180,8 @@ def _explain(console: Console, plan: PrivilegePlan) -> None:
             f"  removed.\n"
         )
 
-    if len(plan.protected_paths) > 0:
-        paths = ", ".join(str(p) for p in plan.protected_paths)
-        console.print(
-            f"  [cyan]Integration paths[/]: {paths} are not writable by you, so creating\n"
-            f"  links there needs sudo. Use --no-links to skip system integration.\n"
-        )
-
     if plan.creates_root:
-        only_reason = len(plan.system_programs) == 0 and len(plan.protected_paths) == 0
+        only_reason = len(plan.system_programs) == 0
         scope = "To avoid sudo entirely" if only_reason else "To remove the install-root reason"
         console.print(
             f"  [dim]{scope}, press Ctrl-C, then run in your shell:[/]\n"
@@ -189,11 +190,6 @@ def _explain(console: Console, plan: PrivilegePlan) -> None:
             "  [dim]Then rerun the same command. Keep the export in your shell startup\n"
             "  so later commands use the same root.[/]\n"
         )
-        if len(plan.protected_paths) > 0:
-            console.print(
-                "  [dim]The integration paths above would still need sudo. Point them at\n"
-                "  directories you own, or use --no-links.[/]\n"
-            )
 
 
 def untrusted_component(root: Path) -> Path | None:
@@ -331,6 +327,16 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
             "[dim]Choose a root you own:[/]\n"
             '[dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
             "[dim]or have an administrator grant you access to the existing path.[/]\n"
+        )
+        raise typer.Exit(1)
+
+    if len(plan.protected_paths) > 0:
+        paths = ", ".join(str(p) for p in plan.protected_paths)
+        console.print(
+            f"\n[red]Error: integration directories must be writable by you: {paths}[/]\n"
+            "[dim]Point the matching ROOKERY_BIN_DIR, ROOKERY_DESKTOP_DIR, or\n"
+            "ROOKERY_MAN_DIR at a directory you own, or pass --no-links to skip\n"
+            "system integration.[/]\n"
         )
         raise typer.Exit(1)
 

@@ -24,6 +24,10 @@ from rookery.registry import (
     list_programs,
 )
 from rookery.sudo_requirement import SudoRequirement
+from rookery.system import (
+    IntegrationPermissionError,
+    SystemLinker,
+)
 from tests.conftest import DummyProgram
 
 
@@ -334,8 +338,10 @@ class TestLinkCapabilities:
 
         plan = build_plan([get_program("tarssh")], create_links=True)
 
+        # Still collected, so preflight can reject it, but no longer a sudo reason:
+        # protected integration directories are outside the supported contract.
         assert plan.protected_paths == [Path("/proc/protected-bin")]
-        assert plan.needs_sudo is True
+        assert plan.needs_sudo is False
 
 
 class TestTrustedChain:
@@ -376,3 +382,87 @@ class TestTrustedChain:
             preflight(Console(), [_program("gdu", SudoRequirement.NOT_REQUIRED)], create_links=False)
 
         assert validated == [], "must refuse before prompting for sudo"
+
+
+class TestPerDestinationElevation:
+    """A manager is permission to elevate where required, not everywhere."""
+
+    @staticmethod
+    def _recorder() -> tuple[object, list[list[str]]]:
+        calls: list[list[str]] = []
+
+        class Fake:
+            def run_as_root(self, command: list[str]) -> None:
+                calls.append(command)
+
+        return Fake(), calls
+
+    def test_user_writable_destination_is_never_elevated(self, tmp_path: Path) -> None:
+        """Regression: a manager for the install root wrote home-local links as root."""
+        bin_dir = tmp_path / ".local" / "bin"
+        bin_dir.mkdir(parents=True)
+        target = tmp_path / "prog" / "tool"
+        target.parent.mkdir()
+        target.write_text("#!/bin/sh\n")
+
+        fake, calls = self._recorder()
+        linker = SystemLinker(bin_dir=bin_dir, desktop_dir=tmp_path / "d", man_dir=tmp_path / "m", sudo_manager=fake)
+        linker.create_binary_symlink(target, "tool")
+
+        assert calls == [], "user-writable destination must not be elevated"
+        # Non-vacuous: prove the ordinary branch actually did the work
+        assert (bin_dir / "tool").is_symlink()
+        assert (bin_dir / "tool").resolve() == target.resolve()
+
+    def test_user_writable_desktop_and_man_are_never_elevated(self, tmp_path: Path) -> None:
+        man_page = tmp_path / "prog" / "tool.1"
+        man_page.parent.mkdir()
+        man_page.write_text(".TH TOOL 1\n")
+
+        fake, calls = self._recorder()
+        linker = SystemLinker(
+            bin_dir=tmp_path / "b", desktop_dir=tmp_path / "d", man_dir=tmp_path / "m", sudo_manager=fake
+        )
+        linker.create_desktop_entry("tool", {"Name": "Tool", "Exec": "/bin/true"})
+        linker.create_man_symlink(man_page, "man1")
+
+        assert calls == []
+        assert (tmp_path / "d" / "tool.desktop").is_file()
+        assert (tmp_path / "m" / "man1" / "tool.1").is_symlink()
+
+    def test_removal_from_writable_destination_is_never_elevated(self, tmp_path: Path) -> None:
+        bin_dir = tmp_path / "bin"
+        bin_dir.mkdir()
+        target = tmp_path / "tool"
+        target.write_text("")
+        (bin_dir / "tool").symlink_to(target)
+
+        fake, calls = self._recorder()
+        linker = SystemLinker(bin_dir=bin_dir, desktop_dir=tmp_path / "d", man_dir=tmp_path / "m", sudo_manager=fake)
+        assert linker.remove_binary_symlink("tool") is True
+
+        assert calls == []
+        assert not (bin_dir / "tool").exists()
+
+    @pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
+    def test_protected_destination_without_manager_raises_clearly(self, tmp_path: Path) -> None:
+        """The plan and the linker disagreeing is surfaced, not attempted and failed."""
+        protected = tmp_path / "locked"
+        protected.mkdir()
+        protected.chmod(0o500)
+        target = tmp_path / "tool"
+        target.write_text("")
+        try:
+            linker = SystemLinker(
+                bin_dir=protected, desktop_dir=tmp_path / "d", man_dir=tmp_path / "m", sudo_manager=None
+            )
+            with pytest.raises(IntegrationPermissionError):
+                linker.create_binary_symlink(target, "tool")
+        finally:
+            protected.chmod(0o700)
+
+    def test_constructor_creates_desktop_dir_not_its_parent(self, tmp_path: Path) -> None:
+        """Regression: the loop created desktop_dir.parent, so the entry write failed."""
+        desktop = tmp_path / "share" / "applications"
+        SystemLinker(bin_dir=tmp_path / "b", desktop_dir=desktop, man_dir=tmp_path / "m")
+        assert desktop.is_dir()
