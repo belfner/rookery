@@ -131,6 +131,7 @@ Inspect what is installed:
 
 ```bash
 uvx rookery list                # Installed programs, versions, pin and link status
+uvx rookery list --all          # Adds every other program in the catalog as Available
 uvx rookery info                # Configuration, paths, and stats
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```

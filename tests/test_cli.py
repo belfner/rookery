@@ -90,6 +90,29 @@ def test_list_shows_pin_column(isolated_install_dir: Path) -> None:
     assert "Pin" in result.output
 
 
+def test_list_all_shows_uninstalled_programs(isolated_install_dir: Path) -> None:
+    result = runner.invoke(__main__.app, ["list", "--all"])
+    assert result.exit_code == 0
+    assert "Available" in result.output
+    assert "bat" in result.output
+
+
+def test_list_without_all_shows_only_installed(isolated_install_dir: Path) -> None:
+    _install_pinned("bat", "0.25.0")
+    result = runner.invoke(__main__.app, ["list"])
+    assert result.exit_code == 0
+    assert "bat" in result.output
+    assert "yazi" not in result.output
+    assert "Available" not in result.output
+
+
+def test_list_empty_suggests_all_flag(isolated_install_dir: Path) -> None:
+    result = runner.invoke(__main__.app, ["list"])
+    assert result.exit_code == 0
+    assert "No programs installed" in result.output
+    assert "list --all" in result.output
+
+
 def test_pins_lists_pinned(isolated_install_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _install_pinned("bat", "0.25.0", reason="stability")
 

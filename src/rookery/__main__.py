@@ -294,38 +294,59 @@ def _install_single(
 
 
 @app.command(name="list")
-def list_command() -> None:
+def list_command(
+    all_flag: Annotated[
+        bool,
+        typer.Option("--all", "-a", help="Include registered programs that are available to install"),
+    ] = False,
+) -> None:
     """
     List installed programs with current versions and link status.
 
     Displays a table with program name, current version, installation status,
-    and link status. Only shows programs that are currently installed.
+    and link status. Shows programs that are currently installed; use --all to
+    also list every other registered program as available to install.
     """
-    programs = list_programs()
+    programs = sorted(list_programs(), key=lambda p: p.name)
     installed = [p for p in programs if p.version_file.exists()]
+    available = [p for p in programs if not p.version_file.exists()]
 
-    if len(installed) == 0:
+    if len(installed) == 0 and not all_flag:
         console.print("[yellow]No programs installed[/]")
+        console.print(f"[yellow]Run `{RUN} list --all` to see programs available to install[/]")
+        return
+
+    rows = installed + available if all_flag else installed
+
+    if len(rows) == 0:
+        console.print("[yellow]No programs registered[/]")
         return
 
     # Create Rich table
-    table = Table(title="Installed Programs")
+    title = "Programs" if all_flag else "Installed Programs"
+    table = Table(title=title)
     table.add_column("Program", style="cyan", no_wrap=True)
     table.add_column("Current", style="green")
     table.add_column("Status", style="magenta")
     table.add_column("Pin", style="yellow")
     table.add_column("Links", style="blue")
 
-    for prog in installed:
-        current = prog.read_version_file()
-        link_display, link_style = compute_link_status_for_list(prog)
+    for prog in rows:
         pin = get_pin(prog)
         pin_display = pin.version if pin is not None else ""
+        link_display, link_style = compute_link_status_for_list(prog)
+
+        if prog.version_file.exists():
+            current = prog.read_version_file()
+            status = "Installed"
+        else:
+            current = "[dim]—[/dim]"
+            status = "[dim]Available[/dim]"
 
         table.add_row(
             prog.name,
             current,
-            "Installed",
+            status,
             pin_display,
             f"[{link_style}]{link_display}[/]",
         )
