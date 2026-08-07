@@ -2,37 +2,57 @@
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import replace
 from pathlib import Path
 
+from rookery.cli_helpers import RUN
 from rookery.operations import InstallOperation
 from rookery.program import (
     LinkCapabilities,
     Program,
+    ProgramMetadata,
 )
 from rookery.sudo_requirement import SudoRequirement
 from rookery.version_sources import StaticVersionSource
+
+
+LEGACY_VERSION_LABEL = "script"
 
 
 class ShellScriptProgram(Program):
     """
     Base class for programs that bundle shell scripts inline.
 
-    Shell script programs use a static "script" version and embed script content
-    directly in the class definition. A StaticVersionSource exposes that single
-    bundled version and rejects exact historical selection.
+    Shell script programs embed their payload directly in the class definition and
+    declare the version that payload is at. A StaticVersionSource exposes that single
+    bundled version and rejects exact historical selection, so `rookery update` moves
+    an install forward once the declared version rises above the installed one.
+
+    Bump `version` in the same change that edits `scripts` or `man_pages`; the payload
+    digest is recorded in tests/script_versions.lock and a test compares the two.
 
     Attributes
     ----------
+    version : str
+        Version of the bundled payload, e.g. "1.2.0". Required for subclasses.
     scripts : dict[str, str]
         Mapping of script name to script content. Required for subclasses.
     man_pages : dict[str, str]
         Mapping of man page filename (e.g., "script.1") to content. Optional.
         Section is inferred from the extension (.1 -> man1, .8 -> man8).
+    payload_extras : dict[str, str]
+        Additional values that decide what gets installed, folded into the payload
+        digest alongside the scripts. A subclass whose create_generated_files reads
+        something beyond scripts and man_pages declares it here so an edit to it is
+        caught by the lockfile test.
     """
 
     sudo_requirement: SudoRequirement = SudoRequirement.NOT_REQUIRED
+    version: str = ""
     scripts: dict[str, str] = {}
     man_pages: dict[str, str] = {}
+    payload_extras: dict[str, str] = {}
 
     @property
     def link_capabilities(self) -> LinkCapabilities:
@@ -52,30 +72,109 @@ class ShellScriptProgram(Program):
         )
 
     def __init__(self) -> None:
-        """Initialize shell-script program with a static version source."""
-        super().__init__()
-        self.version_source = StaticVersionSource(version_label="script")
-
-    async def get_latest_version(self) -> str:
         """
-        Return static version for bundled scripts.
+        Initialize shell-script program with a static version source.
+
+        Raises
+        ------
+        ValueError
+            If the version class attribute is not set.
+        """
+        super().__init__()
+        if len(self.version) == 0:
+            raise ValueError(f"{self.__class__.__name__} must define a version class attribute")
+        self.version_source = StaticVersionSource(version_label=self.version)
+
+    @classmethod
+    def payload_digest(cls) -> str:
+        """
+        Return a digest over the bundled scripts, man pages, and payload extras.
+
+        Names and contents are folded in sorted order, so the digest depends on the
+        payload alone and stays stable across dictionary insertion order. Every section,
+        name, and content is length-prefixed, which keeps a value that happens to look
+        like a section header or a delimiter from imitating a different payload.
 
         Returns
         -------
         str
-            Always returns "script" since scripts are bundled inline.
+            Hex sha256 digest of the bundled payload.
         """
-        return "script"
+
+        def fold(digest: hashlib._Hash, value: str) -> None:
+            encoded = value.encode()
+            digest.update(f"{len(encoded)}:".encode())
+            digest.update(encoded)
+
+        digest = hashlib.sha256()
+        sections = (("scripts", cls.scripts), ("man_pages", cls.man_pages), ("extras", cls.payload_extras))
+        for section, entries in sections:
+            fold(digest, section)
+            digest.update(f"{len(entries)}:".encode())
+            for name, content in sorted(entries.items()):
+                fold(digest, name)
+                fold(digest, content)
+        return digest.hexdigest()
+
+    async def get_latest_version(self) -> str:
+        """
+        Return the version of the bundled payload.
+
+        Returns
+        -------
+        str
+            The declared version class attribute.
+        """
+        return self.version
+
+    async def get_metadata(self) -> ProgramMetadata:
+        """
+        Report version status, treating a legacy label as older than any declared version.
+
+        Installs made before script programs carried versions hold the label "script" in
+        their version file, which orders after a numeric version under string comparison.
+        Those installs are reported as updatable so the next update moves them onto the
+        declared version.
+
+        Returns
+        -------
+        ProgramMetadata
+            Version and update status for this program.
+        """
+        metadata = await super().get_metadata()
+        if metadata.current_version != LEGACY_VERSION_LABEL:
+            return metadata
+        return replace(
+            metadata,
+            update_available=True,
+            downgrade_available=False,
+            blocked_by_pin=metadata.pinned,
+        )
 
     async def initialize(self, version: str) -> None:
         """
-        Create install directory structure.
+        Create install directory structure, once the requested version is the bundled one.
+
+        Only the bundled payload ships with rookery, so writing it while recording some
+        other version would leave the version file describing bits that are not there.
+        Reinstall paths that carry a version forward from persisted state (`update --force`
+        on a pinned program) land here when a bump has moved the bundled version on.
 
         Parameters
         ----------
         version : str
-            Version being installed (ignored for shell scripts).
+            Version being installed.
+
+        Raises
+        ------
+        ValueError
+            If the requested version differs from the bundled one.
         """
+        if version != self.version:
+            raise ValueError(
+                f"{self.name} bundles version {self.version}, so version {version} cannot be "
+                f"installed; run `{RUN} unpin {self.name}` to move to {self.version}."
+            )
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
     async def get_install_operations(self, version: str) -> list[InstallOperation]:

@@ -661,7 +661,9 @@ class KpodProgram(ShellScriptProgram):
     """kubectl wrappers that resolve a pod by name prefix."""
 
     program_name = "kpod"
+    version = "1.0.0"
     scripts = {"kpod": KPOD_SCRIPT}
+    payload_extras = {"subcommand_links": " ".join(_SUBCOMMAND_LINKS)}
 
     async def create_generated_files(self, version: str) -> None:
         """

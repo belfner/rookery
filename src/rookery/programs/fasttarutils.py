@@ -2153,6 +2153,7 @@ class FasttarutilsProgram(ShellScriptProgram):
     """Fast multi-format tar compression (ftar) and extraction (funtar) utilities."""
 
     program_name = "fasttarutils"
+    version = "1.0.0"
     scripts = {
         "ftar": FTAR_SCRIPT,
         "funtar": FUNTAR_SCRIPT,

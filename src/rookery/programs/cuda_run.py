@@ -325,6 +325,7 @@ class CudaRunProgram(ShellScriptProgram):
     """Run a command inside a throwaway uv environment holding an NVIDIA CUDA toolkit."""
 
     program_name = "cuda-run"
+    version = "1.0.0"
     scripts = {
         "cuda-run": CUDA_RUN_SCRIPT,
     }

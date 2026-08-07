@@ -279,6 +279,7 @@ class TarsshProgram(ShellScriptProgram):
     """Stream a directory/file over SSH via tar pipe."""
 
     program_name = "tarssh"
+    version = "1.0.0"
     scripts = {
         "tarssh": TARSSH_SCRIPT,
     }

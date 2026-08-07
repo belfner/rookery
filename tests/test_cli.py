@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from rookery import __main__
 from rookery.config import config
 from rookery.registry import get_program
+from rookery.shell_script_program import ShellScriptProgram
 from rookery.state import (
     InstalledState,
     PinState,
@@ -63,10 +64,12 @@ def test_help_lists_new_commands() -> None:
 
 
 def test_versions_static_program() -> None:
+    prog = get_program("fasttarutils")
+    assert isinstance(prog, ShellScriptProgram)
     result = runner.invoke(__main__.app, ["versions", "fasttarutils"])
     assert result.exit_code == 0
     assert "bundled rookery version" in result.output
-    assert "script" in result.output
+    assert prog.version in result.output
 
 
 def test_pins_empty(isolated_install_dir: Path) -> None:

@@ -130,8 +130,30 @@ tag = self.upstream_tag_for(version)
 man_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/man.tgz"
 ```
 
-**Shell-script programs** attach a `StaticVersionSource` automatically: they expose a single
-bundled version (`script`) and report exact selection as unsupported.
+**Shell-script programs** declare the version their bundled payload is at, and
+`ShellScriptProgram.__init__` attaches a `StaticVersionSource` carrying it. That single version is
+what `rookery versions` lists and what `rookery update` compares against, so raising it is what
+moves installs onto an edited script. Exact selection of an older version is unsupported, since
+only the bundled payload ships.
+
+```python
+class MyScriptProgram(ShellScriptProgram):
+    program_name = "myscript"
+    version = "1.0.0"                       # raise this whenever the payload below changes
+    scripts = {"myscript": MYSCRIPT_SCRIPT}
+    payload_extras = {"links": " ".join(_LINKS)}   # other values create_generated_files reads
+```
+
+`tests/script_versions.lock` pairs each program's declared version with a digest over `scripts`,
+`man_pages`, and `payload_extras`. Editing a payload without raising `version` fails
+`tests/test_script_versions.py`; run `make relock-scripts` to record an intended bump. Relock
+refuses a program whose digest moved at an unchanged version and names it, so a relock absorbs
+only edits a bump describes; `--allow-same-version` records one anyway. A subclass whose
+`create_generated_files` reads anything beyond those three attributes declares it in
+`payload_extras` so the digest covers it.
+
+`initialize` rejects a request for any version other than the declared one, which is what a
+pinned program meets under `update --force` once a bump has moved past the pin.
 
 **Programs that subclass `Program` directly** (no `version_source`) expose only their latest
 version: `rookery versions` shows the latest, and exact installs are reported as unsupported.

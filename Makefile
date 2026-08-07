@@ -1,4 +1,4 @@
-.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check
+.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check relock-scripts
 
 clean:
 	rm -rf dist/ build/ *.egg-info src/*.egg-info
@@ -38,3 +38,6 @@ typecheck:
 	uv run mypy src/
 
 check: lint format-check typecheck test
+
+relock-scripts:
+	uv run python -m tests.relock_script_versions
