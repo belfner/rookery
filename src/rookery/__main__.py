@@ -47,7 +47,11 @@ from rookery.registry import (
     get_program,
     list_programs,
 )
-from rookery.state import PinState
+from rookery.state import (
+    PinState,
+    program_state_lock,
+    program_state_lock_async,
+)
 from rookery.sudo import SudoManager
 from rookery.sudo_requirement import SudoRequirement
 from rookery.system import SystemLinker
@@ -271,23 +275,51 @@ def _install_single(
 
     sudo_mgr = _resolve_install_sudo(prog, no_links)
 
+    async def install_then_pin() -> tuple[str | None, bool, str | None]:
+        """
+        Install and apply the requested pin change under one lock held by one task.
+
+        Returns
+        -------
+        tuple[str | None, bool, str | None]
+            The version pinned or None, whether an existing pin was cleared, and the
+            version of a pin that blocked the install, or None when it went ahead.
+        """
+        async with program_state_lock_async(prog):
+            # The pin was read before the version was resolved, which takes network
+            # time. A pin placed in that window gets the same treatment the first read
+            # would have given it.
+            late_pin = get_pin(prog)
+            if late_pin is not None and late_pin.version != resolution.version and not pin and not unpin:
+                return None, False, late_pin.version
+
+            await install_or_update_program(
+                prog, resolution.version, console, sudo_mgr, not no_links, resolution=resolution
+            )
+            pinned = pin_installed_version(prog, reason=reason).version if pin else None
+            cleared = unpin_program(prog) if unpin else False
+        return pinned, cleared, None
+
     try:
-        asyncio.run(
-            install_or_update_program(prog, resolution.version, console, sudo_mgr, not no_links, resolution=resolution)
-        )
+        pinned_version, cleared_pin, blocking_pin = asyncio.run(install_then_pin())
     except Exception as e:
         console.print(f"[red]✗ Failed to install {name}: {e}[/]")
         raise typer.Exit(1) from None
 
+    if blocking_pin is not None:
+        console.print(
+            f"[red]{name} is pinned to {blocking_pin}. "
+            f"Pass --pin to repin to {resolution.version} or --unpin to clear the pin.[/]"
+        )
+        raise typer.Exit(1)
+
     console.print(f"[green]✓ Installed {name} [blue]{resolution.version}[/][/]")
 
-    if pin:
-        pinned = pin_installed_version(prog, reason=reason)
-        console.print(f"[green]✓ Pinned {name} to {pinned.version}[/]")
+    if pinned_version is not None:
+        console.print(f"[green]✓ Pinned {name} to {pinned_version}[/]")
         _emit_pin_warning(prog)
-    elif unpin:
-        if unpin_program(prog):
-            console.print(f"[green]✓ Cleared pin on {name}[/]")
+    elif cleared_pin:
+        console.print(f"[green]✓ Cleared pin on {name}[/]")
 
     if prog.sudo_requirement == SudoRequirement.NOT_REQUIRED:
         check_and_warn_path(console)
@@ -1185,16 +1217,20 @@ def pin_command(
             console.print(f"Install it first, or use `{RUN} pin {program} VERSION --install`.")
         raise typer.Exit(1)
 
-    if version is not None:
-        current = prog.read_version_file()
-        if current != version:
-            console.print(f"[yellow]{program} is installed at {current}, not {version}.[/]")
-            console.print(
-                f"Use `{RUN} install {program}@{version} --pin` or `{RUN} pin {program} {version} --install`."
-            )
-            raise typer.Exit(1)
+    # Checking which version is installed and pinning it are one locked scope, so the
+    # version confirmed here is the version that gets pinned.
+    with program_state_lock(prog):
+        if version is not None:
+            current = prog.read_version_file()
+            if current != version:
+                console.print(f"[yellow]{program} is installed at {current}, not {version}.[/]")
+                console.print(
+                    f"Use `{RUN} install {program}@{version} --pin` or `{RUN} pin {program} {version} --install`."
+                )
+                raise typer.Exit(1)
 
-    pinned = pin_installed_version(prog, reason=reason)
+        pinned = pin_installed_version(prog, reason=reason)
+
     console.print(f"[green]✓ Pinned {program} to {pinned.version}[/]")
     _emit_pin_warning(prog)
 

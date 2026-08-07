@@ -7,7 +7,19 @@ workflow code never read or write the sidecar directly.
 
 from __future__ import annotations
 
+import asyncio
+import fcntl
 import json
+import threading
+from collections.abc import (
+    AsyncIterator,
+    Callable,
+    Iterator,
+)
+from contextlib import (
+    asynccontextmanager,
+    contextmanager,
+)
 from dataclasses import (
     dataclass,
     field,
@@ -22,8 +34,23 @@ from typing import (
     Protocol,
 )
 
+from rookery.config import config
+
 
 STATE_FILENAME = ".rookery-state.json"
+LOCK_SUFFIX = ".rookery-lock"
+
+LOCK_POLL_SECONDS = 0.05
+"""Delay between non-blocking acquisition attempts in the async lock."""
+
+_LOCK_STATE = threading.local()
+"""Per-thread map of owner to nesting depth per lock file.
+
+Depth is tracked per owner rather than per process because separate owners must exclude
+each other: two threads open the lock file separately and so hold separate file
+descriptions, and two coroutines on one loop contend for the same program. Only a nested
+scope belonging to the same owner reuses its lock.
+"""
 SCHEMA_VERSION = 1
 LEGACY_SOURCE = "legacy"
 
@@ -315,3 +342,203 @@ def write_program_state_atomic(program: _ProgramLike, state: ProgramState) -> No
     tmp_path = path.with_name(f"{path.name}.tmp")
     tmp_path.write_text(json.dumps(state.to_dict(), indent=2) + "\n")
     tmp_path.replace(path)
+
+
+def lock_path_for(program: _ProgramLike) -> Path:
+    """
+    Return the lock file path guarding a program's state.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program to locate the lock for.
+
+    Returns
+    -------
+    Path
+        Path of the lock file, in a directory rookery can always create rather than in
+        the program's own directory. That covers a first install, whose root does not
+        exist yet, and means uninstalling a program never unlinks a held lock and lets
+        a second holder take one on a fresh inode.
+    """
+    lock_dir = config.lock_dir
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    return lock_dir / f"{program.name}{LOCK_SUFFIX}"
+
+
+def _current_owner() -> object:
+    """
+    Return the entity a lock is held on behalf of.
+
+    A running asyncio task is its own owner, so two sibling coroutines contending for
+    one program exclude each other rather than sharing their thread's nesting. Sync code
+    called from inside a task sees that same task, which is what lets a sync lock nest
+    inside an async one. Outside a loop the thread is the owner.
+
+    Returns
+    -------
+    object
+        The running task, or the current thread.
+    """
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return task if task is not None else threading.current_thread()
+
+
+def _owner_depths() -> dict[str, int]:
+    """
+    Return the current owner's per-lock-file nesting depths.
+
+    Returns
+    -------
+    dict[str, int]
+        Depth per lock file path, created on first use for this owner.
+    """
+    owners: dict[object, dict[str, int]] | None = getattr(_LOCK_STATE, "owners", None)
+    if owners is None:
+        owners = {}
+        _LOCK_STATE.owners = owners
+    return owners.setdefault(_current_owner(), {})
+
+
+def _release_depth(depths: dict[str, int], key: str) -> None:
+    """
+    Drop one level of nesting for a lock file.
+
+    Parameters
+    ----------
+    depths : dict[str, int]
+        Depth mapping for the owner that took the lock.
+    key : str
+        Lock file path whose depth is being released.
+    """
+    remaining = depths[key] - 1
+    if remaining == 0:
+        del depths[key]
+    else:
+        depths[key] = remaining
+
+    if len(depths) == 0:
+        owners: dict[object, dict[str, int]] = _LOCK_STATE.owners
+        for owner, tracked in list(owners.items()):
+            if tracked is depths:
+                del owners[owner]
+
+
+@contextmanager
+def program_state_lock(program: _ProgramLike) -> Iterator[None]:
+    """
+    Hold an exclusive lock on a program's state for the duration of the block.
+
+    The lock is advisory and per program, so commands touching different programs run
+    unimpeded. It lives outside the install tree, so the whole install and uninstall
+    lifecycle is guarded by the same file, including the first install that creates the
+    install root.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose state is being changed.
+
+    Yields
+    ------
+    None
+        Control, with the lock held.
+    """
+    lock_file = lock_path_for(program)
+    key = str(lock_file)
+
+    # flock is held per open file description, so opening the file again on this thread
+    # would block on the lock this thread already holds. Depth tracking makes an inner
+    # scope reuse the outer one, which lets a lock span code that mutates state itself.
+    depths = _owner_depths()
+    held = depths.get(key, 0)
+    depths[key] = held + 1
+
+    try:
+        if held > 0:
+            yield
+            return
+
+        with lock_file.open("a+") as handle:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        _release_depth(depths, key)
+
+
+@asynccontextmanager
+async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]:
+    """
+    Hold a program's state lock without blocking the event loop.
+
+    Acquisition polls a non-blocking flock and awaits between attempts, so a coroutine
+    waiting on a lock another process holds lets its sibling coroutines run. Blocking
+    the loop instead would stall the tasks holding the very locks being waited on.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose state is being changed.
+
+    Yields
+    ------
+    None
+        Control, with the lock held.
+    """
+    lock_file = lock_path_for(program)
+    key = str(lock_file)
+    depths = _owner_depths()
+    held = depths.get(key, 0)
+    depths[key] = held + 1
+
+    try:
+        if held > 0:
+            yield
+            return
+
+        with lock_file.open("a+") as handle:
+            while True:
+                try:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    await asyncio.sleep(LOCK_POLL_SECONDS)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    finally:
+        _release_depth(depths, key)
+
+
+def mutate_program_state(program: _ProgramLike, change: Callable[[ProgramState], None]) -> ProgramState:
+    """
+    Apply a change to a program's state under its lock.
+
+    The state is read inside the lock and written before it is released, so a change
+    made by another process between an earlier read and this write is preserved rather
+    than overwritten by a stale snapshot.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose state is being changed.
+    change : Callable[[ProgramState], None]
+        Callable that mutates the freshly read state in place.
+
+    Returns
+    -------
+    ProgramState
+        The state as written.
+    """
+    with program_state_lock(program):
+        state = read_program_state(program)
+        change(state)
+        write_program_state_atomic(program, state)
+    return state

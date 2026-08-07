@@ -18,6 +18,7 @@ from rookery.config import config
 from rookery.deb_program import DebProgram
 from rookery.install_resolution import install_resolution
 from rookery.program import Program
+from rookery.state import program_state_lock_async
 from rookery.sudo import SudoManager
 from rookery.system import SystemLinker
 from rookery.version_sources import VersionResolution
@@ -54,19 +55,24 @@ async def install_or_update_program(
     resolution : VersionResolution | None
         Active resolution to bind during install, by default None.
     """
-    # Install program (uses program's own install() method)
-    if resolution is not None:
-        with install_resolution(resolution):
-            await program.install(resolution.version)
-    else:
-        await program.install(version)
+    # Writing the payload, recording the installed identity, and creating the links are
+    # one locked scope, so a concurrent uninstall cannot remove the install directory
+    # from under a running install. The async lock awaits between attempts, so a task
+    # waiting here leaves the loop free for the sibling tasks holding other locks.
+    async with program_state_lock_async(program):
+        # Install program (uses program's own install() method)
+        if resolution is not None:
+            with install_resolution(resolution):
+                await program.install(resolution.version)
+        else:
+            await program.install(version)
 
-    # Create system links if requested
-    # For .deb programs, SystemLinker is never used (apt handles everything)
-    # For archive programs with user-local paths, sudo_manager may be None
-    if create_links and not isinstance(program, DebProgram):
-        linker = SystemLinker(sudo_manager=sudo_mgr)
-        linker.setup_program(program)
+        # Create system links if requested
+        # For .deb programs, SystemLinker is never used (apt handles everything)
+        # For archive programs with user-local paths, sudo_manager may be None
+        if create_links and not isinstance(program, DebProgram):
+            linker = SystemLinker(sudo_manager=sudo_mgr)
+            linker.setup_program(program)
 
 
 async def install_program(

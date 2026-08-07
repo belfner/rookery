@@ -20,7 +20,10 @@ from rookery.program import (
     Program,
     ProgramMetadata,
 )
-from rookery.state import ProgramState
+from rookery.state import (
+    ProgramState,
+    program_state_lock_async,
+)
 from rookery.sudo import SudoManager
 from rookery.system import SystemLinker
 from rookery.version_sources import VersionResolution
@@ -114,17 +117,20 @@ async def update_program(
                 return (False, False, "")
 
             # Force reinstalls the pinned bits from persisted identity, never re-resolving.
-            resolution = _pinned_resolution(program.read_state())
-            if resolution is None:
-                console.print(
-                    f"[red]✗ {program.name} pin and installed state have drifted; "
-                    f"run `{RUN} install {program.name}@{pin_selector} --pin` to repair.[/]"
-                )
-                return (False, True, "")
+            # The identity is read under the lock that the reinstall itself holds, so the
+            # pin acted on is the pin still recorded.
+            async with program_state_lock_async(program):
+                resolution = _pinned_resolution(program.read_state())
+                if resolution is None:
+                    console.print(
+                        f"[red]✗ {program.name} pin and installed state have drifted; "
+                        f"run `{RUN} install {program.name}@{pin_selector} --pin` to repair.[/]"
+                    )
+                    return (False, True, "")
 
-            await install_or_update_program(
-                program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
-            )
+                await install_or_update_program(
+                    program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+                )
             if not batch:
                 console.print(f"[green]✓ Reinstalled pinned {program.name} [blue]{resolution.version}[/][/]")
             return (True, True, resolution.version)
@@ -143,10 +149,42 @@ async def update_program(
 
         resolution = await program.resolve_version("latest")
 
-        # Use unified install function with the resolved version identity active
-        await install_or_update_program(
-            program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
-        )
+        # The pin was read before the version was resolved, which takes network time. A
+        # pin placed in that window is honoured by rereading under the install's lock,
+        # which lands on the same branches the first read would have taken.
+        async with program_state_lock_async(program):
+            late_state = program.read_state()
+            if late_state.is_pinned:
+                if not force:
+                    if not batch:
+                        console.print(
+                            f"[yellow]{program.name} was pinned while its update was being prepared; "
+                            f"use `{RUN} unpin {program.name}` to move it.[/]"
+                        )
+                    return (False, False, "")
+
+                # Force reinstalls the pinned bits, matching the branch a pin present
+                # from the start would have taken.
+                late_selector = late_state.pin.version if late_state.pin is not None else meta.current_version
+                pinned = _pinned_resolution(late_state)
+                if pinned is None:
+                    console.print(
+                        f"[red]✗ {program.name} pin and installed state have drifted; "
+                        f"run `{RUN} install {program.name}@{late_selector} --pin` to repair.[/]"
+                    )
+                    return (False, True, "")
+
+                await install_or_update_program(
+                    program, pinned.version, console, sudo_mgr, create_links, resolution=pinned
+                )
+                if not batch:
+                    console.print(f"[green]✓ Reinstalled pinned {program.name} [blue]{pinned.version}[/][/]")
+                return (True, True, pinned.version)
+
+            # Use unified install function with the resolved version identity active
+            await install_or_update_program(
+                program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+            )
 
         if not batch:
             console.print(f"[green]✓ Updated {program.name} [blue]{resolution.version}[/][/]")

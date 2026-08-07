@@ -10,7 +10,11 @@ from pathlib import Path
 from rookery.config import config
 from rookery.path_utils import is_path_writable
 from rookery.program import Program
-from rookery.state import LinkRecord
+from rookery.state import (
+    LinkRecord,
+    ProgramState,
+    program_state_lock,
+)
 from rookery.sudo import SudoManager
 
 
@@ -538,20 +542,23 @@ class SystemLinker:
 
         removed: list[Path] = []
 
-        state = program.read_state()
-        retained: list[LinkRecord] = []
-        for record in self._stale_records(state.links, manifest):
-            if not self._manages_link_path(Path(record.path)):
-                # Written under different integration directories; kept so restoring
-                # them and running unlink can still find it.
-                retained.append(record)
-            elif self._remove_recorded_link(record):
-                removed.append(Path(record.path))
-            else:
-                retained.append(record)
+        def sweep(state: ProgramState) -> None:
+            # Reading the records, removing their links, and writing the new set all
+            # happen against the state this callback was handed, inside its lock, so no
+            # link is removed whose record a later write would fail to account for.
+            retained: list[LinkRecord] = []
+            for record in self._stale_records(state.links, manifest):
+                if not self._manages_link_path(Path(record.path)):
+                    # Written under different integration directories; kept so restoring
+                    # them and running unlink can still find it.
+                    retained.append(record)
+                elif self._remove_recorded_link(record):
+                    removed.append(Path(record.path))
+                else:
+                    retained.append(record)
+            state.links = manifest + retained
 
-        state.links = manifest + retained
-        program.write_state(state)
+        program.mutate_state(sweep)
 
         return removed
 
@@ -636,6 +643,25 @@ class SystemLinker:
         dict[str, bool]
             Results dictionary with keys "symlinks", "desktop", and "man".
         """
+        # Removal and the record update are one locked scope, so a link recreated by a
+        # concurrent setup cannot end up live but unrecorded.
+        with program_state_lock(program):
+            return self._remove_links_locked(program)
+
+    def _remove_links_locked(self, program: Program) -> dict[str, bool]:
+        """
+        Remove a program's links and clear their records, with its state lock held.
+
+        Parameters
+        ----------
+        program : Program
+            Program to remove links for.
+
+        Returns
+        -------
+        dict[str, bool]
+            Results dictionary with keys "symlinks", "desktop", and "man".
+        """
         results = {"symlinks": False, "desktop": False, "man": False}
         cleared: set[str] = set()
 
@@ -665,23 +691,23 @@ class SystemLinker:
             # Program not fully installed, skip man page removal
             pass
 
-        # Every recorded link goes, not only the ones the manifest no longer names: this
-        # removes all of a program's links, and a manifest that cannot be read (a payload
-        # renamed since install) would otherwise name none of them and leave them orphaned
-        # once the state recording them is gone. Each is verified against its recorded
-        # target first, so a path since repointed or replaced by a regular file belongs to
-        # whoever put it there and stays.
-        state = program.read_state()
-        for record in list(state.links):
-            if not self._is_recorded_link(record) or not self._manages_link_path(Path(record.path)):
-                continue
-            if not self._remove_recorded_link(record):
-                continue
-            results["symlinks" if Path(record.path).parent == self.bin_dir else "man"] = True
-            cleared.add(record.path)
+        def finish(state: ProgramState) -> None:
+            # Every recorded link goes, not only the ones the manifest no longer names:
+            # this removes all of a program's links, and a manifest that cannot be read
+            # (a payload renamed since install) would otherwise name none of them and
+            # leave them orphaned once the state recording them is gone. Each is verified
+            # against its recorded target first, so a path since repointed or replaced by
+            # a regular file belongs to whoever put it there and stays.
+            for record in list(state.links):
+                if not self._is_recorded_link(record) or not self._manages_link_path(Path(record.path)):
+                    continue
+                if not self._remove_recorded_link(record):
+                    continue
+                results["symlinks" if Path(record.path).parent == self.bin_dir else "man"] = True
+                cleared.add(record.path)
+            state.links = [record for record in state.links if record.path not in cleared]
 
-        state.links = [record for record in state.links if record.path not in cleared]
-        program.write_state(state)
+        program.mutate_state(finish)
 
         return results
 
@@ -710,6 +736,31 @@ class SystemLinker:
         if not program.version_file.exists():
             return results
 
+        # Creating the links and recording them are one locked scope, so a record never
+        # outlives a concurrent unlink that removed the link it names.
+        with program_state_lock(program):
+            # The check above answered before the lock was held, so a concurrent
+            # uninstall may have removed the program while this call waited.
+            if not program.version_file.exists():
+                return results
+            return self._setup_locked(program, results)
+
+    def _setup_locked(self, program: Program, results: dict[str, bool]) -> dict[str, bool]:
+        """
+        Create the program's links and record them, with its state lock already held.
+
+        Parameters
+        ----------
+        program : Program
+            Program to set up.
+        results : dict[str, bool]
+            Result accumulator with keys "symlinks", "desktop", and "man".
+
+        Returns
+        -------
+        dict[str, bool]
+            The accumulator, with True for each kind of link newly created.
+        """
         # Check each binary symlink
         for binary_path in program.get_binary_paths():
             if not binary_path.exists():

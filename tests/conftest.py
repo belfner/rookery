@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import niquests
 import pytest
 
+from rookery.config import config
 from rookery.fetching import (
     Asset,
     Release,
@@ -120,3 +122,18 @@ def dummy_program(tmp_path: Path) -> DummyProgram:
     prog.version_file = prog.install_dir / ".version"
     prog.install_dir.mkdir(parents=True, exist_ok=True)
     return prog
+
+
+@pytest.fixture(autouse=True)
+def isolated_lock_dir(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
+    """
+    Point state locks at a temp directory so a run leaves the user's cache alone.
+
+    The patch is applied through this fixture's own MonkeyPatch rather than the shared
+    fixture, so a test calling monkeypatch.undo() reverts only what that test patched.
+    """
+    lock_dir = tmp_path_factory.mktemp("rookery-locks")
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(config, "lock_dir", lock_dir)
+    yield lock_dir
+    patcher.undo()

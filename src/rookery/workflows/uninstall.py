@@ -9,6 +9,7 @@ from rich.console import Console
 
 from rookery.deb_program import DebProgram
 from rookery.program import Program
+from rookery.state import program_state_lock
 from rookery.sudo import SudoManager
 from rookery.system import SystemLinker
 
@@ -35,34 +36,45 @@ def uninstall_deb_program(program: Program, console: Console) -> None:
     if not package_metadata.exists():
         raise RuntimeError(f"Package metadata not found for {program.name}")
 
-    package_name = package_metadata.read_text().strip()
+    # The answer is collected before the lock is taken, so a waiting command is not held
+    # up by however long someone takes to reply.
+    response = input(f"\nAutoremove (apt) unused dependencies for {package_metadata.read_text().strip()}? (y/n): ")
+    autoremove = response.lower() == "y"
 
-    try:
-        subprocess.run(
-            ["sudo", "apt", "remove", "-y", package_name],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as e:
-        if e.stdout:
-            console.print(e.stdout)
-        if e.stderr:
-            console.print(f"[red]{e.stderr}[/]")
-        raise RuntimeError(f"Failed to remove {package_name}: apt returned {e.returncode}") from e
+    # Removing the package and deleting the metadata describing it are one locked scope,
+    # so a concurrent install that completed in the meantime keeps the metadata matching
+    # what is actually installed.
+    with program_state_lock(program):
+        if not package_metadata.exists():
+            raise RuntimeError(f"Package metadata not found for {program.name}")
 
-    response = input(f"\nAutoremove (apt) unused dependencies for {package_name}? (y/n): ")
-    if response.lower() == "y":
+        package_name = package_metadata.read_text().strip()
+
         try:
-            subprocess.run(["sudo", "apt", "autoremove", "-y"], check=True, capture_output=True, text=True)
+            subprocess.run(
+                ["sudo", "apt", "remove", "-y", package_name],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
         except subprocess.CalledProcessError as e:
             if e.stdout:
                 console.print(e.stdout)
             if e.stderr:
                 console.print(f"[red]{e.stderr}[/]")
+            raise RuntimeError(f"Failed to remove {package_name}: apt returned {e.returncode}") from e
 
-    if program.install_dir.exists():
-        shutil.rmtree(program.install_dir)
+        if autoremove:
+            try:
+                subprocess.run(["sudo", "apt", "autoremove", "-y"], check=True, capture_output=True, text=True)
+            except subprocess.CalledProcessError as e:
+                if e.stdout:
+                    console.print(e.stdout)
+                if e.stderr:
+                    console.print(f"[red]{e.stderr}[/]")
+
+        if program.install_dir.exists():
+            shutil.rmtree(program.install_dir)
 
 
 def uninstall_program(
@@ -93,20 +105,29 @@ def uninstall_program(
         uninstall_deb_program(program, console)
         return
 
-    # Remove system links first
-    if not skip_links:
-        linker = SystemLinker(sudo_manager=sudo_mgr)
-        results = linker.remove_program_links(program)
+    # Link removal and the deletion of the directory holding the state are one locked
+    # scope, so a command mutating this program's state cannot be left writing into a
+    # directory that has since gone.
+    with program_state_lock(program):
+        # The check above answered before the lock was held, so a concurrent uninstall
+        # may have removed the program while this call waited.
+        if not program.install_dir.exists():
+            console.print(f"[yellow]{program.name} is not installed[/]")
+            return
 
-        if results["symlinks"]:
-            console.print("[green]✓ Removed symlinks[/]")
-        if results["desktop"]:
-            console.print("[green]✓ Removed desktop entry[/]")
-        if results["man"]:
-            console.print("[green]✓ Removed man page links[/]")
+        if not skip_links:
+            linker = SystemLinker(sudo_manager=sudo_mgr)
+            results = linker.remove_program_links(program)
 
-    # Remove installation directory
-    shutil.rmtree(program.install_dir)
+            if results["symlinks"]:
+                console.print("[green]✓ Removed symlinks[/]")
+            if results["desktop"]:
+                console.print("[green]✓ Removed desktop entry[/]")
+            if results["man"]:
+                console.print("[green]✓ Removed man page links[/]")
+
+        # Remove installation directory
+        shutil.rmtree(program.install_dir)
     console.print(f"[green]✓ Uninstalled {program.name}[/]")
 
     # Warn if links were explicitly skipped by user
@@ -142,15 +163,25 @@ def uninstall_programs(
     man_changed = False
 
     for prog in programs:
-        if prog.install_dir.exists():
-            if isinstance(prog, DebProgram):
-                uninstall_deb_program(prog, console)
-                uninstalled_count += 1
-                system_managed_count += 1
+        if not prog.install_dir.exists():
+            continue
+
+        if isinstance(prog, DebProgram):
+            uninstall_deb_program(prog, console)
+            uninstalled_count += 1
+            system_managed_count += 1
+            continue
+
+        # Link removal and the deletion of the directory holding the state are one
+        # locked scope, matching the single-program path.
+        with program_state_lock(prog):
+            # The check above answered before the lock was held, so a concurrent
+            # uninstall may have removed the program while this call waited.
+            if not prog.install_dir.exists():
                 continue
 
             # Remove links first
-            if linker:
+            if linker is not None:
                 results = linker.remove_program_links(prog)
                 if results["symlinks"] or results["desktop"] or results["man"]:
                     links_removed_count += 1
@@ -165,7 +196,7 @@ def uninstall_programs(
             uninstalled_count += 1
 
     # Update only the databases that changed
-    if linker and (desktop_changed or man_changed):
+    if linker is not None and (desktop_changed or man_changed):
         if desktop_changed:
             linker.update_desktop_database()
         if man_changed:

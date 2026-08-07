@@ -10,6 +10,7 @@ from __future__ import annotations
 from rookery.program import Program
 from rookery.state import (
     PinState,
+    ProgramState,
     utc_now_iso,
 )
 
@@ -55,21 +56,25 @@ def pin_installed_version(program: Program, reason: str | None = None) -> PinSta
     ValueError
         If the program is not installed.
     """
-    state = program.read_state()
-    if state.installed is None:
+    if program.read_state().installed is None:
         raise ValueError(f"{program.name} is not installed; cannot pin.")
 
-    state.program = program.name
-    state.pin = PinState(
-        enabled=True,
-        version=state.installed.version,
-        upstream_id=state.installed.upstream_id,
-        source=state.installed.source,
-        pinned_at=utc_now_iso(),
-        reason=reason,
-    )
-    program.write_state(state)
-    return state.pin
+    def apply(state: ProgramState) -> None:
+        if state.installed is None:
+            raise ValueError(f"{program.name} is not installed; cannot pin.")
+        state.program = program.name
+        state.pin = PinState(
+            enabled=True,
+            version=state.installed.version,
+            upstream_id=state.installed.upstream_id,
+            source=state.installed.source,
+            pinned_at=utc_now_iso(),
+            reason=reason,
+        )
+
+    pin = program.mutate_state(apply).pin
+    assert pin is not None
+    return pin
 
 
 def unpin_program(program: Program) -> bool:
@@ -86,9 +91,15 @@ def unpin_program(program: Program) -> bool:
     bool
         True if a pin was removed, False if the program was not pinned.
     """
-    state = program.read_state()
-    if state.pin is None:
+    if program.read_state().pin is None:
         return False
-    state.pin = None
-    program.write_state(state)
-    return True
+
+    removed = False
+
+    def clear(state: ProgramState) -> None:
+        nonlocal removed
+        removed = state.pin is not None
+        state.pin = None
+
+    program.mutate_state(clear)
+    return removed

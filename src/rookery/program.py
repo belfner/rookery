@@ -7,6 +7,7 @@ from abc import (
     ABC,
     abstractmethod,
 )
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -21,6 +22,7 @@ from rookery.operations import (
 from rookery.state import (
     InstalledState,
     ProgramState,
+    mutate_program_state,
     read_program_state,
     utc_now_iso,
     write_program_state_atomic,
@@ -553,6 +555,22 @@ class Program(ABC):
         """
         write_program_state_atomic(self, state)
 
+    def mutate_state(self, change: Callable[[ProgramState], None]) -> ProgramState:
+        """
+        Apply a change to this program's state under its lock.
+
+        Parameters
+        ----------
+        change : Callable[[ProgramState], None]
+            Callable that mutates the freshly read state in place.
+
+        Returns
+        -------
+        ProgramState
+            The state as written.
+        """
+        return mutate_program_state(self, change)
+
     def _record_installed_state(self, version: str) -> None:
         """
         Record installed-version identity after a successful install, preserving any pin.
@@ -566,27 +584,29 @@ class Program(ABC):
             Version just installed.
         """
         resolution = get_active_resolution()
-        state = self.read_state()
-        state.program = self.name
-        if resolution is not None and resolution.version == version:
-            state.installed = InstalledState(
-                version=version,
-                requested=resolution.requested,
-                source=resolution.source,
-                upstream_id=resolution.upstream_id,
-                installed_at=utc_now_iso(),
-                metadata=dict(resolution.metadata),
-            )
-        else:
-            source = self.version_source.name if self.version_source is not None else "legacy"
-            state.installed = InstalledState(
-                version=version,
-                requested="latest",
-                source=source,
-                upstream_id=version,
-                installed_at=utc_now_iso(),
-            )
-        self.write_state(state)
+
+        def record(state: ProgramState) -> None:
+            state.program = self.name
+            if resolution is not None and resolution.version == version:
+                state.installed = InstalledState(
+                    version=version,
+                    requested=resolution.requested,
+                    source=resolution.source,
+                    upstream_id=resolution.upstream_id,
+                    installed_at=utc_now_iso(),
+                    metadata=dict(resolution.metadata),
+                )
+            else:
+                source = self.version_source.name if self.version_source is not None else "legacy"
+                state.installed = InstalledState(
+                    version=version,
+                    requested="latest",
+                    source=source,
+                    upstream_id=version,
+                    installed_at=utc_now_iso(),
+                )
+
+        self.mutate_state(record)
 
     def read_version_file(self) -> str:
         """Read version from .version file."""

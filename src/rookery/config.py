@@ -28,6 +28,17 @@ class Config:
         self.man_dir = self._get_path_from_env("ROOKERY_MAN_DIR", Path("~/.local/share/man").expanduser())
         self.temp_dir = self._get_path_from_env("ROOKERY_TEMP_DIR", Path("/tmp/rookery"))
 
+        # Per-program lock files live here. A user-owned directory outside the install
+        # tree keeps the lock available before the install root exists and after a
+        # program's directory is removed. XDG_CACHE_HOME is honoured when set.
+        # The XDG spec requires an absolute value; a relative one is ignored, which also
+        # keeps the lock path from depending on the working directory a command ran in.
+        cache_home = os.environ.get("XDG_CACHE_HOME")
+        cache_root = Path("~/.cache")
+        if cache_home is not None and len(cache_home) > 0 and Path(cache_home).is_absolute():
+            cache_root = Path(cache_home)
+        self.lock_dir = self._get_path_from_env("ROOKERY_LOCK_DIR", (cache_root / "rookery" / "locks").expanduser())
+
     def _get_path_from_env(self, env_var: str, default: Path) -> Path:
         """
         Get path from environment variable or use default.
