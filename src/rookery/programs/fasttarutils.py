@@ -4,6 +4,9 @@ Ships two standalone Python programs, ``ftar`` and ``funtar``, that stream tar
 through the best available (preferably parallel) compressor/decompressor using
 zero-copy ``os.splice``. Formats are selected by extension (compress) or magic
 bytes (extract): gz, bz2, xz, lz, lzo, zst, and legacy Z.
+
+The container formats 7z and zip are driven through the 7-Zip family (or
+Info-ZIP as a fallback), which reads and writes the archive tree directly.
 """
 
 from __future__ import annotations
@@ -26,7 +29,7 @@ so payload bytes travel kernel-to-kernel; Python only observes the transferred
 byte count to drive the progress bar. With --no-progress the two processes are
 connected by a direct OS pipe, taking Python out of the data path entirely.
 
-Supported formats and extensions:
+Stream formats and extensions:
     gz   .tar.gz  .tgz .taz          pigz  -> gzip
     bz2  .tar.bz2 .tbz .tbz2 .tz2    lbzip2 -> pbzip2 -> bzip2
     xz   .tar.xz  .txz               xz -T (parallel) -> pixz
@@ -34,6 +37,14 @@ Supported formats and extensions:
     lzo  .tar.lzo .tzo               lzop (single-thread by design)
     zst  .tar.zst .tzst              zstd -T (parallel)
     Z    .tar.Z   .taZ               compress (legacy, no parallel version)
+
+Container formats build the archive tree themselves, so tar stays out of the
+pipeline and the archiver renders its own progress:
+    7z   .7z                         7zz -> 7z -> 7za -> 7zr
+    zip  .zip                        7zz -> 7z -> 7za -> zip (Info-ZIP)
+
+The 7-Zip family is invoked with -snl so symlinks are stored as links, and it
+records Unix permissions in the archive's attribute field.
 """
 
 from __future__ import annotations
@@ -52,6 +63,10 @@ from typing import Callable
 # Payload is moved by the kernel; this only bounds bytes-per-syscall / pipe width.
 CHUNK_SIZE = 1 << 20
 PIPE_TARGET_SIZE = 1 << 20
+
+# Container archivers narrate on stdout; their chatter joins ftar's own
+# messages on fd 2 so stdout stays clean for redirection.
+STDERR_FD = 2
 
 
 # --------------------------------------------------------------------------- #
@@ -132,6 +147,125 @@ BACKENDS: dict[str, Backend] = {
 
 
 @dataclass(frozen=True)
+class ContainerRequest:
+    """
+    Inputs for building a container archiver's command line.
+
+    Parameters
+    ----------
+    format_key : str
+        Container format to write (``"7z"`` or ``"zip"``).
+    archive : str
+        Absolute path of the archive to create.
+    target : str
+        Name of the file or directory to store, relative to the working
+        directory the archiver is launched in.
+    level : int | None
+        Compression level, or None for the tool's own default.
+    threads : int
+        Worker thread count.
+    quiet : bool
+        True to suppress the archiver's own progress rendering.
+    """
+
+    format_key: str
+    archive: str
+    target: str
+    level: int | None
+    threads: int
+    quiet: bool
+
+
+@dataclass(frozen=True)
+class ContainerBackend:
+    """
+    An archiver that reads the file tree itself and writes a container archive.
+
+    Parameters
+    ----------
+    name : str
+        Executable name, looked up on PATH.
+    build_args : Callable
+        ``(ContainerRequest) -> list[str]`` producing the argument vector.
+    levels : range | None
+        Valid compression levels, or None if the tool has no level concept.
+    parallel : bool
+        True if the tool uses multiple cores.
+    apt : str
+        Debian/Ubuntu package that provides the executable.
+    note : str
+        Short annotation shown in --formats output.
+    """
+
+    name: str
+    build_args: Callable[[ContainerRequest], list[str]]
+    levels: range | None
+    parallel: bool
+    apt: str
+    note: str = ""
+
+    def available(self) -> bool:
+        """Return True if the executable is on PATH."""
+        return shutil.which(self.name) is not None
+
+    def install_hint(self) -> str:
+        """Return a one-line installation suggestion."""
+        return f"sudo apt install {self.apt}"
+
+
+def _seven_zip_create(exe: str) -> Callable[[ContainerRequest], list[str]]:
+    """
+    Return an argv builder driving a 7-Zip family executable in create mode.
+
+    ``-spd`` makes 7-Zip treat the target as a literal name, and ``--`` ends
+    switch parsing, so a path holding glob characters or a leading dash names
+    exactly the one file it looks like.
+    """
+    def build(req: ContainerRequest) -> list[str]:
+        args = [exe, "a", f"-t{req.format_key}", "-snl", "-spd", "-y",
+                f"-mmt={req.threads}"]
+        if req.level is not None:
+            args.append(f"-mx={req.level}")
+        if req.quiet:
+            args.extend(["-bso0", "-bsp0"])
+        args.extend([req.archive, "--", req.target])
+        return args
+
+    return build
+
+
+def _info_zip_create(req: ContainerRequest) -> list[str]:
+    """
+    Return the Info-ZIP argv creating a .zip archive.
+
+    ``-y`` keeps symlinks as links, ``-nw`` treats the target as a literal
+    name, and ``--`` ends switch parsing.
+    """
+    args = ["zip", "-r", "-y", "-nw"]
+    if req.level is not None:
+        args.append(f"-{req.level}")
+    if req.quiet:
+        args.append("-q")
+    args.extend([req.archive, "--", req.target])
+    return args
+
+
+CONTAINER_BACKENDS: dict[str, ContainerBackend] = {
+    "7zz": ContainerBackend("7zz", _seven_zip_create("7zz"), range(0, 10), True, "7zip",
+                            note="official 7-Zip build"),
+    "7z":  ContainerBackend("7z",  _seven_zip_create("7z"),  range(0, 10), True, "p7zip-full"),
+    "7za": ContainerBackend("7za", _seven_zip_create("7za"), range(0, 10), True, "p7zip-full",
+                            note="standalone build"),
+    "7zr": ContainerBackend("7zr", _seven_zip_create("7zr"), range(0, 10), True, "p7zip",
+                            note="minimal build, .7z only"),
+    "zip": ContainerBackend("zip", _info_zip_create, range(0, 10), False, "zip",
+                            note="Info-ZIP"),
+}
+
+AnyBackend = Backend | ContainerBackend
+
+
+@dataclass(frozen=True)
 class Format:
     """
     An archive compression format keyed by its canonical short name.
@@ -147,41 +281,74 @@ class Format:
         legacy ``.Z`` family which is case-sensitive).
     backend_names : tuple[str, ...]
         Backends in preference order (accelerated first).
+    container : bool
+        True when the archiver builds the file tree itself, so the format is
+        written by a single tool instead of a tar-to-compressor pipeline.
     """
 
     key: str
     canonical_ext: str
     extensions: tuple[str, ...]
     backend_names: tuple[str, ...]
+    container: bool = False
 
     @property
-    def backends(self) -> list[Backend]:
-        """Backends in preference order."""
-        return [BACKENDS[n] for n in self.backend_names]
+    def registry(self) -> dict[str, Backend] | dict[str, ContainerBackend]:
+        """The backend table this format draws from."""
+        return CONTAINER_BACKENDS if self.container else BACKENDS
 
-    def pick_backend(self, forced: str | None = None) -> tuple[Backend | None, list[str]]:
+    @property
+    def backends(self) -> list[AnyBackend]:
+        """Backends in preference order."""
+        registry = self.registry
+        return [registry[n] for n in self.backend_names]
+
+    def resolve_backend_name(self, forced: str) -> str | None:
+        """
+        Match a forced backend against this format's registry keys and executable names.
+
+        Parameters
+        ----------
+        forced : str
+            Registry key or executable name supplied on the command line.
+
+        Returns
+        -------
+        str | None
+            The matching registry key, or None when this format has no such
+            backend.
+        """
+        registry = self.registry
+        return next(
+            (n for n in self.backend_names if n == forced or registry[n].name == forced),
+            None,
+        )
+
+    def pick_backend(self, forced: str | None = None) -> tuple[AnyBackend | None, list[str]]:
         """
         Choose the best installed backend for this format.
 
         Parameters
         ----------
         forced : str | None
-            Backend name to force (must belong to this format).
+            Backend registry key or executable name to force (must belong to
+            this format).
 
         Returns
         -------
-        tuple[Backend | None, list[str]]
+        tuple[Backend | ContainerBackend | None, list[str]]
             The chosen backend (or None if nothing usable is installed) and a
             list of advisory messages (install hints for better options).
         """
         notes: list[str] = []
         if forced is not None:
-            if forced not in self.backend_names:
+            resolved = self.resolve_backend_name(forced)
+            if resolved is None:
+                valid = ", ".join(sorted({self.registry[n].name for n in self.backend_names}))
                 raise ValueError(
-                    f"backend '{forced}' does not produce .{self.key} "
-                    f"(valid: {', '.join(self.backend_names)})"
+                    f"backend '{forced}' does not produce .{self.key} (valid: {valid})"
                 )
-            backend = BACKENDS[forced]
+            backend = self.registry[resolved]
             if not backend.available():
                 notes.append(
                     f"backend '{forced}' is not installed ({backend.install_hint()})"
@@ -189,7 +356,7 @@ class Format:
                 return None, notes
             return backend, notes
 
-        chosen: Backend | None = None
+        chosen: AnyBackend | None = None
         for backend in self.backends:
             if backend.available():
                 chosen = backend
@@ -227,6 +394,10 @@ FORMATS: dict[str, Format] = {
                   ("zstd",)),
     "Z":   Format("Z",   ".tar.Z",   (".tar.Z", ".taZ", ".Z"),
                   ("compress",)),
+    "7z":  Format("7z",  ".7z",      (".7z",),
+                  ("7zz", "7z", "7za", "7zr"), container=True),
+    "zip": Format("zip", ".zip",     (".zip",),
+                  ("7zz", "7z", "7za", "zip"), container=True),
 }
 
 # Legacy suffixes we recognise only to give a helpful error.
@@ -284,6 +455,12 @@ def supported_extensions_line() -> str:
     for fmt in FORMATS.values():
         exts.extend(fmt.extensions)
     return ", ".join(exts)
+
+
+def backend_names_line() -> str:
+    """Return a comma-separated list of every archiver executable ftar can drive."""
+    names = {b.name for b in BACKENDS.values()} | {b.name for b in CONTAINER_BACKENDS.values()}
+    return ", ".join(sorted(names))
 
 
 def print_formats_report(stream=sys.stderr) -> None:
@@ -553,7 +730,7 @@ def compress(input_path: Path, output_path: Path, level: int | None,
     tar = accel = None
     try:
         if show_progress:
-            tar = subprocess.Popen(["tar", "cf", "-", target_name],
+            tar = subprocess.Popen(["tar", "cf", "-", "--", target_name],
                                    cwd=parent_dir, stdout=subprocess.PIPE)
             accel = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=out_file)
             assert tar.stdout is not None and accel.stdin is not None
@@ -574,7 +751,7 @@ def compress(input_path: Path, output_path: Path, level: int | None,
             accel_rc = accel.wait()
         else:
             # Direct kernel pipe: Python is not in the data path.
-            tar = subprocess.Popen(["tar", "cf", "-", target_name],
+            tar = subprocess.Popen(["tar", "cf", "-", "--", target_name],
                                    cwd=parent_dir, stdout=subprocess.PIPE)
             assert tar.stdout is not None
             accel = subprocess.Popen(args, stdin=tar.stdout, stdout=out_file)
@@ -605,6 +782,66 @@ def compress(input_path: Path, output_path: Path, level: int | None,
         total_bytes = compute_total_bytes(input_path)
     return CompressionResult(output_path=output_path, original_bytes=total_bytes,
                              compressed_bytes=compressed_bytes,
+                             elapsed_seconds=elapsed)
+
+
+def compress_container(input_path: Path, output_path: Path, format_key: str,
+                       level: int | None, threads: int, backend: ContainerBackend,
+                       show_progress: bool) -> CompressionResult:
+    """
+    Build a container archive of ``input_path`` with ``backend``.
+
+    Parameters
+    ----------
+    input_path : Path
+        File or directory to archive.
+    output_path : Path
+        Destination archive path.
+    format_key : str
+        Container format to write (``"7z"`` or ``"zip"``).
+    level : int | None
+        Compression level, or None for the tool's default.
+    threads : int
+        Worker thread count (ignored by single-threaded tools).
+    backend : ContainerBackend
+        Archiver to invoke.
+    show_progress : bool
+        When True, let the archiver render its own progress on stderr.
+
+    Returns
+    -------
+    CompressionResult
+        Sizes and duration of the completed run.
+
+    Raises
+    ------
+    RuntimeError
+        If the archiver exits non-zero.
+    """
+    parent_dir = str(input_path.parent) if len(str(input_path.parent)) > 0 else "."
+    # The archiver runs in the input's parent, so the archive path must be
+    # absolute to stay anchored to the invoking directory.
+    archive = str(output_path.absolute())
+    # 7-Zip and Info-ZIP both merge into an archive that is already present, so
+    # the destination is cleared to make the run reflect exactly this input.
+    if output_path.exists():
+        output_path.unlink()
+
+    request = ContainerRequest(format_key=format_key, archive=archive,
+                               target=input_path.name, level=level, threads=threads,
+                               quiet=not show_progress)
+    args = backend.build_args(request)
+
+    start = time.monotonic()
+    completed = subprocess.run(args, cwd=parent_dir, stdout=STDERR_FD, check=False)
+    elapsed = time.monotonic() - start
+
+    if completed.returncode != 0:
+        raise RuntimeError(f"compression failed ({backend.name} rc={completed.returncode})")
+
+    return CompressionResult(output_path=output_path,
+                             original_bytes=compute_total_bytes(input_path),
+                             compressed_bytes=output_path.stat().st_size,
                              elapsed_seconds=elapsed)
 
 
@@ -654,8 +891,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         default=None,
                         help="Force the output format (overrides the extension)")
     parser.add_argument("-b", "--backend", default=None,
-                        help="Force a specific compressor executable "
-                             f"({', '.join(sorted(BACKENDS.keys()))})")
+                        help="Force a specific archiver executable "
+                             f"({backend_names_line()})")
     parser.add_argument("-l", "--level", type=int, default=None,
                         help="Compression level (range depends on the backend; "
                              "default: the tool's own default)")
@@ -687,14 +924,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     threads = args.threads if args.threads > 0 else (os.cpu_count() or 1)
 
-    if shutil.which("tar") is None:
-        print("Error: Required tool 'tar' is not installed.", file=sys.stderr)
-        return 1
-
     input_path = Path(args.input)
     if not input_path.exists():
         print(f"Error: Input path '{input_path}' does not exist.", file=sys.stderr)
         return 1
+    # Path(".").name is empty and Path("..").name is "..", so a relative input
+    # spelled that way is resolved to the directory it actually points at.
+    if input_path.name in ("", ".", ".."):
+        input_path = input_path.resolve()
 
     # ---- format selection: --format wins, otherwise the output extension ----
     try:
@@ -718,6 +955,10 @@ def main(argv: list[str] | None = None) -> int:
             fmt = FORMATS["gz"]
     except ValueError as exc:      # rejected legacy suffixes (.lzma)
         print(f"Error: {exc}", file=sys.stderr)
+        return 1
+
+    if not fmt.container and shutil.which("tar") is None:
+        print("Error: Required tool 'tar' is not installed.", file=sys.stderr)
         return 1
 
     # ---- backend selection with fallbacks and install hints -----------------
@@ -764,9 +1005,17 @@ def main(argv: list[str] | None = None) -> int:
     print("", file=sys.stderr)
 
     try:
-        result = compress(input_path=input_path, output_path=output_path,
-                          level=args.level, threads=threads, backend=backend,
-                          show_progress=not args.no_progress)
+        if fmt.container:
+            assert isinstance(backend, ContainerBackend)
+            result = compress_container(input_path=input_path, output_path=output_path,
+                                        format_key=fmt.key, level=args.level,
+                                        threads=threads, backend=backend,
+                                        show_progress=not args.no_progress)
+        else:
+            assert isinstance(backend, Backend)
+            result = compress(input_path=input_path, output_path=output_path,
+                              level=args.level, threads=threads, backend=backend,
+                              show_progress=not args.no_progress)
     except (RuntimeError, BrokenPipeError, OSError) as exc:
         # Remove the partial/corrupt archive so a failed run leaves no
         # misleading output.
@@ -814,11 +1063,22 @@ archive size is known, like ``pv``). The decompressor feeds tar over a direct
 OS pipe. With --no-progress the decompressor reads the file itself and Python
 is entirely out of the data path.
 
+The container formats 7z and zip need a seekable archive, so they are unpacked
+by the 7-Zip family (or Info-ZIP) writing straight into the destination, and
+that tool renders its own progress. A container holding a lone ``.tar`` member
+is expanded a second time under smart extraction, so ``project.tar.7z`` lands
+as the tree it describes.
+
 Smart extraction behavior (default):
   - archive contains a single root directory  -> extract into the current dir
   - archive contains multiple files/dirs      -> extract into ./<archive-name>/
 Overridden by -d DIR (explicit target), -c (current dir), or -s (always
 ./<archive-name>/, no structure checking).
+
+A destination that is already present needs -f, and -f then extracts over it
+in place. Smart mode and the container formats merge entry by entry, replacing
+what collides and keeping the rest; -d and -c on a tar stream hand the
+destination to tar, which applies its own overwrite rules.
 """
 
 from __future__ import annotations
@@ -835,6 +1095,10 @@ from typing import Callable
 
 CHUNK_SIZE = 1 << 20
 PIPE_TARGET_SIZE = 1 << 20
+
+# Container archivers narrate on stdout; their chatter joins funtar's own
+# messages on fd 2 so stdout stays clean for redirection.
+STDERR_FD = 2
 
 
 # --------------------------------------------------------------------------- #
@@ -906,6 +1170,107 @@ BACKENDS: dict[str, Backend] = {
 
 
 @dataclass(frozen=True)
+class ContainerRequest:
+    """
+    Inputs for building a container extractor's command line.
+
+    Parameters
+    ----------
+    archive : str
+        Absolute path of the archive to unpack.
+    dest : str
+        Directory the archive contents are written into.
+    threads : int
+        Worker thread count.
+    verbose : bool
+        True to list each extracted member.
+    quiet : bool
+        True to suppress the extractor's own progress rendering.
+    """
+
+    archive: str
+    dest: str
+    threads: int
+    verbose: bool
+    quiet: bool
+
+
+@dataclass(frozen=True)
+class ContainerBackend:
+    """
+    An extractor that reads a seekable container archive and writes files itself.
+
+    Parameters
+    ----------
+    name : str
+        Executable name, looked up on PATH.
+    build_args : Callable
+        ``(ContainerRequest) -> list[str]`` producing the argument vector.
+    parallel : bool
+        True if the tool can use multiple cores.
+    apt : str
+        Debian/Ubuntu package that provides the executable.
+    note : str
+        Short annotation shown in --formats output.
+    """
+
+    name: str
+    build_args: Callable[[ContainerRequest], list[str]]
+    parallel: bool
+    apt: str
+    note: str = ""
+
+    def available(self) -> bool:
+        """Return True if the executable is on PATH."""
+        return shutil.which(self.name) is not None
+
+    def install_hint(self) -> str:
+        """Return a one-line installation suggestion."""
+        return f"sudo apt install {self.apt}"
+
+
+def _seven_zip_extract(exe: str) -> Callable[[ContainerRequest], list[str]]:
+    """Return an argv builder driving a 7-Zip family executable in extract mode."""
+    def build(req: ContainerRequest) -> list[str]:
+        args = [exe, "x", "-y", f"-o{req.dest}", f"-mmt={req.threads}"]
+        args.append("-bb1" if req.verbose else "-bb0")
+        if req.quiet:
+            # -bso0 would also swallow the -bb1 member listing, so it is held
+            # back whenever the caller asked to see the files.
+            args.append("-bsp0")
+            if not req.verbose:
+                args.append("-bso0")
+        args.append(req.archive)
+        return args
+
+    return build
+
+
+def _info_unzip_extract(req: ContainerRequest) -> list[str]:
+    """Return the Info-ZIP argv extracting a .zip archive into a directory."""
+    args = ["unzip", "-o"]
+    if not req.verbose:
+        args.append("-q")
+    args.extend([req.archive, "-d", req.dest])
+    return args
+
+
+CONTAINER_BACKENDS: dict[str, ContainerBackend] = {
+    "7zz": ContainerBackend("7zz", _seven_zip_extract("7zz"), True, "7zip",
+                            note="official 7-Zip build"),
+    "7z":  ContainerBackend("7z",  _seven_zip_extract("7z"),  True, "p7zip-full"),
+    "7za": ContainerBackend("7za", _seven_zip_extract("7za"), True, "p7zip-full",
+                            note="standalone build"),
+    "7zr": ContainerBackend("7zr", _seven_zip_extract("7zr"), True, "p7zip",
+                            note="minimal build, .7z only"),
+    "unzip": ContainerBackend("unzip", _info_unzip_extract, False, "unzip",
+                              note="Info-ZIP"),
+}
+
+AnyBackend = Backend | ContainerBackend
+
+
+@dataclass(frozen=True)
 class Format:
     """
     An archive compression format keyed by its canonical short name.
@@ -914,52 +1279,68 @@ class Format:
     ----------
     key : str
         Short name (e.g. ``"gz"``).
-    magic : bytes
-        Leading magic bytes identifying the format.
+    magics : tuple[bytes, ...]
+        Leading byte sequences identifying the format; any one of them matches.
     extensions : tuple[str, ...]
         Accepted filename suffixes (the legacy ``.Z`` family is matched
         case-sensitively; everything else case-insensitively).
     backend_names : tuple[str, ...]
         Decompression backends in preference order.
+    container : bool
+        True when the archive is a seekable container the extractor unpacks on
+        its own, so it is handed a file path instead of a piped stream.
     """
 
     key: str
-    magic: bytes
+    magics: tuple[bytes, ...]
     extensions: tuple[str, ...]
     backend_names: tuple[str, ...]
+    container: bool = False
 
     @property
-    def backends(self) -> list[Backend]:
-        """Backends in preference order."""
-        return [BACKENDS[n] for n in self.backend_names]
+    def registry(self) -> dict[str, Backend] | dict[str, ContainerBackend]:
+        """The backend table this format draws from."""
+        return CONTAINER_BACKENDS if self.container else BACKENDS
 
-    def pick_backend(self, forced: str | None = None) -> tuple[Backend | None, list[str]]:
+    @property
+    def longest_magic(self) -> int:
+        """Length of this format's longest identifying byte sequence."""
+        return max(len(m) for m in self.magics)
+
+    @property
+    def backends(self) -> list[AnyBackend]:
+        """Backends in preference order."""
+        registry = self.registry
+        return [registry[n] for n in self.backend_names]
+
+    def pick_backend(self, forced: str | None = None) -> tuple[AnyBackend | None, list[str]]:
         """
         Choose the best installed decompression backend for this format.
 
         Returns the chosen backend (or None) and advisory messages.
         """
         notes: list[str] = []
+        registry = self.registry
         if forced is not None:
             # Accept either the registry key or the executable name (they can
             # differ, e.g. the .Z chain registers gzip under the key "gzipZ").
             resolved = next(
                 (n for n in self.backend_names
-                 if n == forced or BACKENDS[n].name == forced), None)
+                 if n == forced or registry[n].name == forced), None)
             if resolved is None:
                 valid = ", ".join(
-                    sorted({BACKENDS[n].name for n in self.backend_names}))
+                    sorted({registry[n].name for n in self.backend_names}))
                 raise ValueError(
                     f"backend '{forced}' cannot read .{self.key} "
                     f"(valid: {valid})")
-            backend = BACKENDS[resolved]
+            backend = registry[resolved]
             if not backend.available():
                 notes.append(
                     f"backend '{forced}' is not installed ({backend.install_hint()})")
                 return None, notes
             return backend, notes
 
-        chosen: Backend | None = None
+        chosen: AnyBackend | None = None
         for backend in self.backends:
             if backend.available():
                 chosen = backend
@@ -979,27 +1360,35 @@ class Format:
 
 
 FORMATS: dict[str, Format] = {
-    "gz":  Format("gz",  b"\x1f\x8b",
+    "gz":  Format("gz",  (b"\x1f\x8b",),
                   (".tar.gz", ".tgz", ".taz", ".gz"),
                   ("pigz", "gzip")),
-    "bz2": Format("bz2", b"BZh",
+    "bz2": Format("bz2", (b"BZh",),
                   (".tar.bz2", ".tbz2", ".tbz", ".tz2", ".bz2"),
                   ("lbzip2", "pbzip2", "bzip2")),
-    "xz":  Format("xz",  b"\xfd7zXZ\x00",
+    "xz":  Format("xz",  (b"\xfd7zXZ\x00",),
                   (".tar.xz", ".txz", ".xz"),
                   ("xz", "pixz")),
-    "lz":  Format("lz",  b"LZIP",
+    "lz":  Format("lz",  (b"LZIP",),
                   (".tar.lz", ".tlz", ".lz"),
                   ("plzip", "lzip")),
-    "lzo": Format("lzo", b"\x89LZO\x00\r\n\x1a\n",
+    "lzo": Format("lzo", (b"\x89LZO\x00\r\n\x1a\n",),
                   (".tar.lzo", ".tzo", ".lzo"),
                   ("lzop",)),
-    "zst": Format("zst", b"\x28\xb5\x2f\xfd",
+    "zst": Format("zst", (b"\x28\xb5\x2f\xfd",),
                   (".tar.zst", ".tzst", ".zst"),
                   ("zstd",)),
-    "Z":   Format("Z",   b"\x1f\x9d",
+    "Z":   Format("Z",   (b"\x1f\x9d",),
                   (".tar.Z", ".taZ", ".Z"),
                   ("gzipZ", "compress")),
+    "7z":  Format("7z",  (b"7z\xbc\xaf\x27\x1c",),
+                  (".7z",),
+                  ("7zz", "7z", "7za", "7zr"), container=True),
+    # PK\x03\x04 leads a member, PK\x05\x06 an empty archive, PK\x07\x08 a
+    # spanned set; all three head a readable zip.
+    "zip": Format("zip", (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+                  (".zip",),
+                  ("7zz", "7z", "7za", "unzip"), container=True),
 }
 
 
@@ -1023,8 +1412,8 @@ def detect_format_by_magic(path: Path) -> Format | None:
     except OSError:
         return None
     # Longest magics first so .Z (1f 9d) never shadows gzip (1f 8b) etc.
-    for fmt in sorted(FORMATS.values(), key=lambda f: len(f.magic), reverse=True):
-        if head.startswith(fmt.magic):
+    for fmt in sorted(FORMATS.values(), key=lambda f: f.longest_magic, reverse=True):
+        if any(head.startswith(magic) for magic in fmt.magics):
             return fmt
     return None
 
@@ -1050,21 +1439,55 @@ def strip_archive_suffix(filename: str) -> str:
     Return the archive basename with its compression suffix removed.
 
     ``project.tar.gz`` and ``project.tgz`` both yield ``project``; a bare
-    compression suffix leaves the stem (``data.gz`` -> ``data``). Unrecognised
-    names fall back to stripping the last extension, as in the shell script.
+    compression suffix leaves the stem (``data.gz`` -> ``data``). A container
+    wrapping a tar sheds both layers (``project.tar.7z`` -> ``project``).
+    Unrecognised names fall back to stripping the last extension, as in the
+    shell script.
     """
     name = os.path.basename(filename)
+    stem = None
     for ext in FORMATS["Z"].extensions:
         if name.endswith(ext):
-            return name[: -len(ext)]
-    lower = name.lower()
-    exts = [ext for fmt in FORMATS.values() if fmt.key != "Z"
-            for ext in fmt.extensions]
-    exts.sort(key=len, reverse=True)
-    for ext in exts:
-        if lower.endswith(ext):
-            return name[: -len(ext)]
-    return os.path.splitext(name)[0]
+            stem = name[: -len(ext)]
+            break
+    if stem is None:
+        lower = name.lower()
+        exts = [ext for fmt in FORMATS.values() if fmt.key != "Z"
+                for ext in fmt.extensions]
+        exts.sort(key=len, reverse=True)
+        for ext in exts:
+            if lower.endswith(ext):
+                stem = name[: -len(ext)]
+                break
+    if stem is None:
+        return os.path.splitext(name)[0]
+    if stem.lower().endswith(".tar"):
+        return stem[: -len(".tar")]
+    return stem
+
+
+def safe_base_name(stem: str) -> str:
+    """
+    Reduce an archive stem to one directory component safe to create in place.
+
+    Names built only from dots (``.``, ``..``, or the empty string left by
+    ``.tar.gz``) name the working or parent directory, so they give way to a
+    fixed placeholder that always lands inside the working directory.
+
+    Parameters
+    ----------
+    stem : str
+        Archive name with its suffixes stripped.
+
+    Returns
+    -------
+    str
+        A single path component usable as a directory name.
+    """
+    candidate = os.path.basename(stem)
+    if candidate.strip(".") == "":
+        return "extracted"
+    return candidate
 
 
 # --------------------------------------------------------------------------- #
@@ -1260,22 +1683,169 @@ def extract(archive: Path, dest_dir: Path, backend: Backend, threads: int,
     return moved
 
 
-def replace_existing(target: Path, force: bool) -> bool:
+def extract_container(archive: Path, dest_dir: Path, backend: ContainerBackend,
+                      threads: int, verbose: bool, show_progress: bool) -> int:
     """
-    Handle a pre-existing extraction target.
+    Unpack a seekable container archive into ``dest_dir``.
 
-    Returns True if extraction may proceed (target removed under ``force``),
-    False if the caller must abort because the target exists.
+    The extractor opens the archive by path and writes the files itself, so it
+    also renders its own progress on stderr.
+
+    Parameters
+    ----------
+    archive : Path
+        Archive to unpack.
+    dest_dir : Path
+        Directory the contents are written into.
+    backend : ContainerBackend
+        Extractor to invoke.
+    threads : int
+        Worker thread count.
+    verbose : bool
+        True to list each extracted member.
+    show_progress : bool
+        True to let the extractor render its own progress.
+
+    Returns
+    -------
+    int
+        Size of the archive that was read.
+
+    Raises
+    ------
+    RuntimeError
+        If the extractor exits non-zero.
     """
-    if not target.exists():
-        return True
-    if not force:
-        return False
-    if target.is_dir() and not target.is_symlink():
-        shutil.rmtree(target)
-    else:
-        target.unlink()
-    return True
+    request = ContainerRequest(archive=str(archive.absolute()), dest=str(dest_dir),
+                               threads=threads, verbose=verbose,
+                               quiet=not show_progress)
+    completed = subprocess.run(backend.build_args(request), stdout=STDERR_FD, check=False)
+    if completed.returncode != 0:
+        raise RuntimeError(f"extraction failed ({backend.name} rc={completed.returncode})")
+    return archive.stat().st_size
+
+
+def unwrap_nested_tar(workdir: Path, verbose: bool) -> None:
+    """
+    Expand a lone ``.tar`` member left behind by container extraction.
+
+    Archives such as ``project.tar.7z`` hold a single tar file, so expanding it
+    in place lets smart placement see the tree the archive actually describes.
+
+    Parameters
+    ----------
+    workdir : Path
+        Directory holding the freshly extracted container contents.
+    verbose : bool
+        True to list each member as tar expands it.
+
+    Raises
+    ------
+    RuntimeError
+        If tar exits non-zero while expanding the member.
+    """
+    entries = list(workdir.iterdir())
+    if len(entries) != 1:
+        return
+    member = entries[0]
+    if member.is_symlink() or not member.is_file() or member.suffix.lower() != ".tar":
+        return
+    if shutil.which("tar") is None:
+        raise RuntimeError(f"expanding '{member.name}' needs tar on PATH")
+
+    # tar writes into a subdirectory so that a member carrying the same name as
+    # the tar file itself lands beside it instead of on the file being read.
+    staging = workdir / f".inner-{os.getpid()}"
+    staging.mkdir()
+    cmd = ["tar", "-x"] + (["-v"] if verbose else []) + ["-C", str(staging), "-f", str(member)]
+    completed = subprocess.run(cmd, check=False)
+    if completed.returncode != 0:
+        raise RuntimeError(f"expanding '{member.name}' failed (tar rc={completed.returncode})")
+    member.unlink()
+    merge_into(staging, workdir, replace_directories=True)
+    staging.rmdir()
+
+
+def merge_into(source: Path, target: Path, replace_directories: bool) -> None:
+    """
+    Move every entry of ``source`` into ``target``, keeping unrelated entries.
+
+    Directories present on both sides are merged recursively. A symlink is
+    moved as the link it is on either side, so a link already sitting at a
+    destination path is replaced rather than followed. ``source`` is left empty.
+
+    Parameters
+    ----------
+    source : Path
+        Directory whose entries are moved out. Must be a real directory.
+    target : Path
+        Directory the entries are moved into, created if absent.
+    replace_directories : bool
+        True to let an incoming entry replace a directory of the same name.
+        False raises instead, so a merge the caller did not authorise leaves
+        the existing tree standing.
+
+    Raises
+    ------
+    ValueError
+        If ``source`` is a symlink, since moving through it would relocate
+        files the archive never described.
+    FileExistsError
+        If an entry collides with a directory and ``replace_directories`` is
+        False.
+    """
+    if source.is_symlink():
+        raise ValueError(f"'{source}' is a symlink; refusing to move its target's contents")
+
+    target.mkdir(parents=True, exist_ok=True)
+    for entry in source.iterdir():
+        destination = target / entry.name
+        entry_is_dir = entry.is_dir() and not entry.is_symlink()
+        dest_is_dir = destination.is_dir() and not destination.is_symlink()
+        if entry_is_dir and dest_is_dir:
+            # A restrictive mode carried by the archive would block the walk.
+            # The staged copy is discarded once merged, so owner access is
+            # simply restored on it; the destination keeps the mode it has.
+            entry_mode = entry.stat().st_mode & 0o777
+            if entry_mode & 0o700 != 0o700:
+                entry.chmod(entry_mode | 0o700)
+            merge_into(entry, destination, replace_directories)
+            entry.rmdir()
+            continue
+        if dest_is_dir:
+            if not replace_directories:
+                raise FileExistsError(
+                    f"'{destination}' is a directory. Use -f to replace it.")
+            shutil.rmtree(destination)
+        elif os.path.lexists(destination):
+            destination.unlink()
+        shutil.move(str(entry), str(destination))
+
+
+def prepare_dest_dir(dest: Path, force: bool) -> str | None:
+    """
+    Ensure ``dest`` is a directory the archive can be extracted into.
+
+    Parameters
+    ----------
+    dest : Path
+        Requested destination directory.
+    force : bool
+        True to extract into a destination that is already present.
+
+    Returns
+    -------
+    str | None
+        An error message when the destination exists and ``force`` is unset,
+        otherwise None with the directory in place.
+    """
+    if os.path.lexists(dest):
+        if not force:
+            return f"'{dest}' already exists. Use -f to extract into it."
+        if dest.is_symlink() or not dest.is_dir():
+            dest.unlink()
+    dest.mkdir(parents=True, exist_ok=True)
+    return None
 
 
 def smart_finalize(tmpdir: Path, base_name: str, force: bool) -> Path:
@@ -1283,8 +1853,18 @@ def smart_finalize(tmpdir: Path, base_name: str, force: bool) -> Path:
     Apply the shell script's smart placement to an extracted temp directory.
 
     A single root directory inside ``tmpdir`` is moved up beside it; anything
-    else makes ``tmpdir`` itself become ``./<base_name>/``. Existing targets
-    abort unless ``force`` is set.
+    else makes ``tmpdir`` itself become ``./<base_name>/``. A target that is
+    already present needs ``force``, and is then extracted over in place.
+
+    Parameters
+    ----------
+    tmpdir : Path
+        Temporary directory holding the extracted contents.
+    base_name : str
+        Archive name with its suffixes stripped, used when the archive has
+        several roots.
+    force : bool
+        True to merge into a destination that is already present.
 
     Returns
     -------
@@ -1297,22 +1877,40 @@ def smart_finalize(tmpdir: Path, base_name: str, force: bool) -> Path:
         If the target exists and ``force`` is False (tmpdir is left for the
         caller's cleanup handler).
     """
+    # A restrictive mode on the archive's own root lands on tmpdir, so owner
+    # access is restored for the walk and handed back at the end.
+    staged_mode = tmpdir.stat().st_mode & 0o777
+    restore_mode = None
+    if staged_mode & 0o700 != 0o700:
+        tmpdir.chmod(staged_mode | 0o700)
+        restore_mode = staged_mode
+
     entries = sorted(p.name for p in tmpdir.iterdir())
     parent = tmpdir.parent
 
-    if len(entries) == 1 and (tmpdir / entries[0]).is_dir():
+    # A lone root that is a symlink stays an entry to move, since descending
+    # through it would relocate whatever it points at.
+    root = tmpdir / entries[0] if len(entries) == 1 else None
+    if root is not None and root.is_dir() and not root.is_symlink():
+        source = root
         target = parent / entries[0]
-        if not replace_existing(target, force):
-            raise FileExistsError(
-                f"'{target}' already exists. Use -f to overwrite.")
-        shutil.move(str(tmpdir / entries[0]), str(target))
-        tmpdir.rmdir()
-        return target
+        restore_mode = None
+    else:
+        source = tmpdir
+        target = parent / base_name
 
-    target = parent / base_name
-    if not replace_existing(target, force):
-        raise FileExistsError(f"'{target}' already exists. Use -f to overwrite.")
-    tmpdir.rename(target)
+    if os.path.lexists(target):
+        if not force:
+            raise FileExistsError(
+                f"'{target}' already exists. Use -f to extract into it.")
+        if target.is_dir() and not target.is_symlink():
+            merge_into(source, target, replace_directories=True)
+            return target
+        target.unlink()
+
+    shutil.move(str(source), str(target))
+    if restore_mode is not None:
+        target.chmod(restore_mode)
     return target
 
 
@@ -1342,12 +1940,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Always extract to ./<archive-name>/ "
                              "(no structure checking)")
     parser.add_argument("-f", "--force", action="store_true",
-                        help="Overwrite an existing target")
+                        help="Extract over a destination that is already "
+                             "present, replacing the entries that collide")
     parser.add_argument("-v", "--verbose", action="store_true",
                         help="Show extracted files")
     parser.add_argument("-b", "--backend", default=None,
-                        help="Force a specific decompressor "
-                             f"({', '.join(sorted(set(b.name for b in BACKENDS.values())))})")
+                        help=f"Force a specific extractor ({backend_names_line()})")
     parser.add_argument("-p", "--threads", type=int, default=0,
                         help="Decompressor threads (0 = all cores, the default)")
     parser.add_argument("--no-progress", action="store_true",
@@ -1355,6 +1953,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--formats", action="store_true",
                         help="Show supported formats and backends, then exit")
     return parser.parse_args(argv)
+
+
+def backend_names_line() -> str:
+    """Return a comma-separated list of every extractor executable funtar can drive."""
+    names = {b.name for b in BACKENDS.values()} | {b.name for b in CONTAINER_BACKENDS.values()}
+    return ", ".join(sorted(names))
 
 
 def print_formats_report(stream=sys.stderr) -> None:
@@ -1391,10 +1995,6 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     threads = args.threads if args.threads > 0 else (os.cpu_count() or 1)
 
-    if shutil.which("tar") is None:
-        print("Error: Required tool 'tar' is not installed.", file=sys.stderr)
-        return 1
-
     archive = Path(args.input)
     if not archive.is_file():
         print(f"Error: Input file '{archive}' does not exist or is not a "
@@ -1415,6 +2015,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Warning: extension suggests .{name_fmt.key} but content is "
               f".{fmt.key}; trusting the content.", file=sys.stderr)
 
+    if not fmt.container and shutil.which("tar") is None:
+        print("Error: Required tool 'tar' is not installed.", file=sys.stderr)
+        return 1
+
     # ---- backend selection with fallbacks and install hints -----------------
     try:
         backend, notes = fmt.pick_backend(forced=args.backend)
@@ -1427,32 +2031,32 @@ def main(argv: list[str] | None = None) -> int:
     if backend is None:
         return 1
 
-    base_name = strip_archive_suffix(archive.name)
+    base_name = safe_base_name(strip_archive_suffix(archive.name))
 
     # ---- output-directory strategy (shell precedence: -d, then -c, then -s) -
     smart = False
     tmpdir: Path | None = None
     if args.directory is not None:
         dest = Path(args.directory)
-        if str(dest) != "." and dest.exists():
-            if not args.force:
-                print(f"Error: '{dest}' already exists. Use -f to overwrite.",
-                      file=sys.stderr)
+        # A destination naming the working directory is the -c case spelled
+        # out, so it extracts in place like tar -C would.
+        if dest.resolve() == Path.cwd():
+            where = "current directory"
+        else:
+            message = prepare_dest_dir(dest, args.force)
+            if message is not None:
+                print(f"Error: {message}", file=sys.stderr)
                 return 1
-            if not replace_existing(dest, force=True):
-                return 1
-        dest.mkdir(parents=True, exist_ok=True)
-        where = f"'{dest}/'"
+            where = f"'{dest}/'"
     elif args.current:
         dest = Path(".")
         where = "current directory"
     elif args.safe:
         dest = Path(".") / base_name
-        if not replace_existing(dest, args.force):
-            print(f"Error: '{dest}' already exists. Use -f to overwrite.",
-                  file=sys.stderr)
+        message = prepare_dest_dir(dest, args.force)
+        if message is not None:
+            print(f"Error: {message}", file=sys.stderr)
             return 1
-        dest.mkdir(parents=True, exist_ok=True)
         print(f"Safe mode: extracting to '{dest}/'", file=sys.stderr)
         where = f"'{dest}/'"
     else:
@@ -1469,20 +2073,56 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Extracting '{archive}' to {where} "
               f"(.{fmt.key} via {backend.name})...", file=sys.stderr)
 
+    staging: Path | None = None
+    merging = False
     try:
-        extract(archive, dest, backend, threads,
-                verbose=args.verbose, show_progress=not args.no_progress)
+        if fmt.container:
+            assert isinstance(backend, ContainerBackend)
+            # The container extractors write through a symlink that already
+            # sits at a destination path. Contents therefore land in a staging
+            # directory and reach the destination through merge_into, which
+            # replaces such an entry with the link the archive describes.
+            if smart:
+                work = dest
+            else:
+                staging = dest / f".tmp-{base_name}-{os.getpid()}"
+                staging.mkdir()
+                work = staging
+            extract_container(archive, work, backend, threads,
+                              verbose=args.verbose,
+                              show_progress=not args.no_progress)
+            if smart:
+                unwrap_nested_tar(work, verbose=args.verbose)
+        else:
+            assert isinstance(backend, Backend)
+            extract(archive, dest, backend, threads,
+                    verbose=args.verbose, show_progress=not args.no_progress)
+
+        merging = True
         if smart:
             assert tmpdir is not None
             final = smart_finalize(tmpdir, base_name, args.force)
             print(f"Extraction complete: ./{final.name}/", file=sys.stderr)
-        elif str(dest) == ".":
-            print("Extraction complete: current directory", file=sys.stderr)
         else:
-            print(f"Extraction complete: {dest}/", file=sys.stderr)
+            if staging is not None:
+                try:
+                    merge_into(staging, dest, replace_directories=args.force)
+                except FileExistsError as exc:
+                    # Entries may already have moved, so this reports as a
+                    # mid-merge failure and the staged copy is kept.
+                    raise RuntimeError(str(exc)) from exc
+                staging.rmdir()
+                staging = None
+            if str(dest) == ".":
+                print("Extraction complete: current directory", file=sys.stderr)
+            else:
+                print(f"Extraction complete: {dest}/", file=sys.stderr)
+        merging = False
         return 0
     except FileExistsError as exc:
+        # Raised before any entry moves, so the staged copy is redundant.
         print(f"Error: {exc}", file=sys.stderr)
+        merging = False
         return 1
     except (RuntimeError, BrokenPipeError, OSError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -1491,9 +2131,17 @@ def main(argv: list[str] | None = None) -> int:
         print("\nInterrupted.", file=sys.stderr)
         return 130
     finally:
-        # Smart-mode temp dir must never survive, mirroring the shell trap.
-        if tmpdir is not None and tmpdir.exists():
-            shutil.rmtree(tmpdir, ignore_errors=True)
+        # A merge that stopped part way leaves some entries at the destination
+        # and the rest in the staging directory, so the staging directory is
+        # kept and its path reported. Every other outcome retires it.
+        held = tmpdir if tmpdir is not None else staging
+        if merging and held is not None and held.exists():
+            print(f"Partial extraction: the remaining entries are at '{held}/'",
+                  file=sys.stderr)
+        else:
+            for scratch in (tmpdir, staging):
+                if scratch is not None and scratch.exists():
+                    shutil.rmtree(scratch, ignore_errors=True)
 
 
 if __name__ == "__main__":
