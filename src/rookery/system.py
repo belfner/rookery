@@ -10,6 +10,7 @@ from pathlib import Path
 from rookery.config import config
 from rookery.path_utils import is_path_writable
 from rookery.program import Program
+from rookery.state import LinkRecord
 from rookery.sudo import SudoManager
 
 
@@ -372,6 +373,188 @@ class SystemLinker:
 
         return existing
 
+    def manifest_links(self, program: Program) -> list[LinkRecord] | None:
+        """
+        Return the links a program's current manifest names, with their targets.
+
+        Parameters
+        ----------
+        program : Program
+            Program to read binary and man page paths from.
+
+        Returns
+        -------
+        list[LinkRecord] | None
+            Links under bin_dir and man_dir, in manifest order. None when the manifest
+            cannot be read in full, which a partially installed program answers with,
+            so a caller can tell an empty manifest from an unreadable one.
+        """
+        try:
+            binary_paths = program.get_binary_paths()
+            man_pages = program.get_man_pages()
+        except FileNotFoundError:
+            return None
+
+        records = [LinkRecord(str(self.bin_dir / path.name), str(path)) for path in binary_paths]
+
+        for section, man_page in man_pages.items():
+            actual_section = section.split(":")[0] if ":" in section else section
+            records.append(LinkRecord(str(self.man_dir / actual_section / man_page.name), str(man_page)))
+
+        return records
+
+    def _is_recorded_link(self, record: LinkRecord) -> bool:
+        """
+        Report whether a recorded path still holds the link that was recorded.
+
+        The target is read as written rather than resolved, so a link left dangling by a
+        payload that dropped its target still matches the record that created it.
+
+        Parameters
+        ----------
+        record : LinkRecord
+            Recorded link to check.
+
+        Returns
+        -------
+        bool
+            True when the path is a symlink pointing at the recorded target.
+        """
+        link_path = Path(record.path)
+        if not link_path.is_symlink():
+            return False
+        return str(link_path.readlink()) == record.target
+
+    def _manages_link_path(self, link_path: Path) -> bool:
+        """
+        Report whether a link path lies in a directory this linker writes to.
+
+        A record written under a different ROOKERY_BIN_DIR or ROOKERY_MAN_DIR falls
+        outside the configured directories, and is left to whoever configured them.
+
+        Parameters
+        ----------
+        link_path : Path
+            Path of the link.
+
+        Returns
+        -------
+        bool
+            True when the path sits directly under bin_dir or a man_dir section.
+        """
+        return link_path.parent == self.bin_dir or link_path.parent.parent == self.man_dir
+
+    def _remove_recorded_link(self, record: LinkRecord) -> bool:
+        """
+        Remove one recorded link, dispatching on the directory holding it.
+
+        Parameters
+        ----------
+        record : LinkRecord
+            Recorded link to remove.
+
+        Returns
+        -------
+        bool
+            True when the link was removed.
+        """
+        link_path = Path(record.path)
+        if link_path.parent == self.bin_dir:
+            return self.remove_binary_symlink(link_path.name)
+        if link_path.parent.parent == self.man_dir:
+            return self.remove_man_symlink(link_path.name, link_path.parent.name)
+        return False
+
+    def _stale_records(self, recorded: list[LinkRecord], manifest: list[LinkRecord]) -> list[LinkRecord]:
+        """
+        Select the recorded links a manifest no longer names.
+
+        A record is stale only while the path still holds the exact link that was
+        recorded, so an alias someone else made, a path taken over by another program,
+        and a path now holding a regular file are all excluded.
+
+        Parameters
+        ----------
+        recorded : list[LinkRecord]
+            Records read from the program's state.
+        manifest : list[LinkRecord]
+            Links the program's current manifest names.
+
+        Returns
+        -------
+        list[LinkRecord]
+            Records safe to remove.
+        """
+        current = {record.path for record in manifest}
+        return [record for record in recorded if record.path not in current and self._is_recorded_link(record)]
+
+    def stale_recorded_links(self, program: Program) -> list[LinkRecord]:
+        """
+        Return recorded links the program's current manifest no longer names.
+
+        A manifest that cannot be read yields nothing, since it cannot say which of the
+        records it still names.
+
+        Parameters
+        ----------
+        program : Program
+            Program whose recorded links should be compared against its manifest.
+
+        Returns
+        -------
+        list[LinkRecord]
+            Records safe to remove.
+        """
+        manifest = self.manifest_links(program)
+        if manifest is None:
+            return []
+        return self._stale_records(program.read_state().links, manifest)
+
+    def sync_links(self, program: Program) -> list[Path]:
+        """
+        Remove the links a program's manifest dropped, then record what it now holds.
+
+        A payload that renames or drops a command leaves a link the manifest no longer
+        describes, putting it beyond the reach of both setup and removal. A record whose
+        removal did not take is kept, so a later run tries again instead of losing track
+        of it, and one whose path lies outside the configured integration directories is
+        kept untouched, since this linker does not write there and restoring those
+        directories is what reaches it. A manifest that cannot be
+        read leaves the records exactly as they are.
+
+        Parameters
+        ----------
+        program : Program
+            Program whose links should be swept and recorded.
+
+        Returns
+        -------
+        list[Path]
+            Link paths that were removed.
+        """
+        manifest = self.manifest_links(program)
+        if manifest is None:
+            return []
+
+        removed: list[Path] = []
+
+        state = program.read_state()
+        retained: list[LinkRecord] = []
+        for record in self._stale_records(state.links, manifest):
+            if not self._manages_link_path(Path(record.path)):
+                # Written under different integration directories; kept so restoring
+                # them and running unlink can still find it.
+                retained.append(record)
+            elif self._remove_recorded_link(record):
+                removed.append(Path(record.path))
+            else:
+                retained.append(record)
+
+        state.links = manifest + retained
+        program.write_state(state)
+
+        return removed
+
     def links_need_update(self, program: Program) -> bool:
         """
         Check if program links need to be created or updated.
@@ -454,12 +637,14 @@ class SystemLinker:
             Results dictionary with keys "symlinks", "desktop", and "man".
         """
         results = {"symlinks": False, "desktop": False, "man": False}
+        cleared: set[str] = set()
 
         # Remove binary symlinks
         try:
             for binary_path in program.get_binary_paths():
                 if self.remove_binary_symlink(binary_path.name):
                     results["symlinks"] = True
+                    cleared.add(str(self.bin_dir / binary_path.name))
         except FileNotFoundError:
             # Program not fully installed, skip symlink removal
             pass
@@ -474,9 +659,29 @@ class SystemLinker:
             for section, man_page in man_pages.items():
                 if self.remove_man_symlink(man_page.name, section):
                     results["man"] = True
+                    actual_section = section.split(":")[0] if ":" in section else section
+                    cleared.add(str(self.man_dir / actual_section / man_page.name))
         except FileNotFoundError:
             # Program not fully installed, skip man page removal
             pass
+
+        # Every recorded link goes, not only the ones the manifest no longer names: this
+        # removes all of a program's links, and a manifest that cannot be read (a payload
+        # renamed since install) would otherwise name none of them and leave them orphaned
+        # once the state recording them is gone. Each is verified against its recorded
+        # target first, so a path since repointed or replaced by a regular file belongs to
+        # whoever put it there and stays.
+        state = program.read_state()
+        for record in list(state.links):
+            if not self._is_recorded_link(record) or not self._manages_link_path(Path(record.path)):
+                continue
+            if not self._remove_recorded_link(record):
+                continue
+            results["symlinks" if Path(record.path).parent == self.bin_dir else "man"] = True
+            cleared.add(record.path)
+
+        state.links = [record for record in state.links if record.path not in cleared]
+        program.write_state(state)
 
         return results
 
@@ -557,5 +762,9 @@ class SystemLinker:
             if needs_create:
                 self.create_man_symlink(man_page, section)
                 results["man"] = True
+
+        # Sweep the links recorded by an earlier install that this manifest no longer
+        # names, then record the current set for the next install to compare against.
+        self.sync_links(program)
 
         return results

@@ -152,8 +152,24 @@ only edits a bump describes; `--allow-same-version` records one anyway. A subcla
 `create_generated_files` reads anything beyond those three attributes declares it in
 `payload_extras` so the digest covers it.
 
-`initialize` rejects a request for any version other than the declared one, which is what a
-pinned program meets under `update --force` once a bump has moved past the pin.
+Two behaviours follow from the bundled payload being the only one that ships. `initialize`
+rejects a request for any version other than the declared one, which is what a pinned program
+meets under `update --force` once a bump has moved past the pin. And `create_generated_files`
+clears the previously generated payload before writing, so a script, man page, or symlink
+dropped from the payload leaves the install directory. Both live in `ShellScriptProgram`;
+a subclass overriding `create_generated_files` calls `super()` first, as kpod does.
+
+The matching system links are swept by `SystemLinker.sync_links`, called from
+`setup_program` after the current links are created. Each install records its links in
+`.rookery-state.json` as path-and-target pairs, and the sweep removes recorded links the new
+manifest no longer names. A record is acted on only while its path still holds a symlink
+pointing at the recorded target, so an alias someone else created and a path since repointed
+or replaced by a regular file are all left alone. A removal that did not take stays recorded,
+so the next run tries again. `remove_program_links` sweeps the same records, which is what
+lets uninstall reach a link renamed before it ran. Privilege planning reads those records too,
+so a release dropping its last man page still plans for the man directory it must write to.
+This applies to every program, since a renamed binary or man page leaves the same orphan
+whatever the source of the payload.
 
 **Programs that subclass `Program` directly** (no `version_source`) expose only their latest
 version: `rookery versions` shows the latest, and exact installs are reported as unsupported.

@@ -145,6 +145,21 @@ def build_plan(programs: list[Program], create_links: bool) -> PrivilegePlan:
         if any(cap.desktop for cap in rookery_linked):
             needed.append(config.desktop_dir)
 
+        # Removing a link recorded by an earlier install writes to the directory holding
+        # it, which the new manifest may no longer name: a release that drops its last
+        # man page still has a man page link to remove. Records written under other
+        # integration directories are left out, since removal skips them as well.
+        managed = {config.bin_dir, config.desktop_dir}
+        for program in programs:
+            if program.sudo_requirement is SudoRequirement.REQUIRED:
+                continue
+            for link in program.read_state().links:
+                parent = Path(link.path).parent
+                if parent not in managed and parent.parent != config.man_dir:
+                    continue
+                if parent not in needed:
+                    needed.append(parent)
+
         plan.protected_paths = [path for path in needed if not is_path_writable(path)]
 
     return plan

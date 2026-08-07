@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
@@ -193,18 +194,41 @@ class ShellScriptProgram(Program):
         """
         return []
 
+    def clear_payload(self) -> None:
+        """
+        Remove the generated payload from the install directory.
+
+        Everything a script program keeps in its install directory is generated, apart
+        from the dot-prefixed `.version` and `.rookery-state.json` sentinels. Clearing
+        before a write means an update to a payload that dropped or renamed a script,
+        man page, or symlink leaves the old entry behind on disk.
+        """
+        if not self.install_dir.exists():
+            return
+
+        for entry in self.install_dir.iterdir():
+            if entry.name.startswith("."):
+                continue
+            if entry.is_dir() and not entry.is_symlink():
+                shutil.rmtree(entry)
+            else:
+                entry.unlink()
+
     async def create_generated_files(self, version: str) -> None:
         """
         Write scripts and man pages to install directory.
 
-        Scripts are written directly to install_dir and made executable.
-        Man pages are written to install_dir/man/ subdirectory.
+        The previously generated payload is cleared first, so the directory holds the
+        current payload alone. Scripts are written directly to install_dir and made
+        executable. Man pages are written to install_dir/man/ subdirectory.
 
         Parameters
         ----------
         version : str
             Version being installed (ignored for shell scripts).
         """
+        self.clear_payload()
+
         # Write scripts and make them executable
         for script_name, content in self.scripts.items():
             script_path = self.install_dir / script_name

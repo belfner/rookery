@@ -159,6 +159,33 @@ class PinState:
 
 
 @dataclass
+class LinkRecord:
+    """
+    One system link rookery created for a program.
+
+    Attributes
+    ----------
+    path : str
+        Absolute path of the link itself.
+    target : str
+        Absolute path the link was pointed at, as written. Removal compares against it,
+        so a path now holding some other link is recognised as no longer rookery's.
+    """
+
+    path: str
+    target: str
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to a JSON-ready dict."""
+        return {"path": self.path, "target": self.target}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> LinkRecord:
+        """Build from a parsed JSON dict."""
+        return cls(path=str(data["path"]), target=str(data["target"]))
+
+
+@dataclass
 class ProgramState:
     """
     Full structured state for one program.
@@ -171,6 +198,9 @@ class ProgramState:
         Installed-version identity, None when not installed.
     pin : PinState | None
         Active pin, None when unpinned.
+    links : list[LinkRecord]
+        System links created for this program, recorded so a link the program no longer
+        names can be told apart from one someone else made.
     schema_version : int
         State schema version.
     """
@@ -178,6 +208,7 @@ class ProgramState:
     program: str
     installed: InstalledState | None = None
     pin: PinState | None = None
+    links: list[LinkRecord] = field(default_factory=list)
     schema_version: int = SCHEMA_VERSION
 
     @property
@@ -192,6 +223,7 @@ class ProgramState:
             "program": self.program,
             "installed": None if self.installed is None else self.installed.to_dict(),
             "pin": None if self.pin is None else self.pin.to_dict(),
+            "links": [link.to_dict() for link in self.links],
         }
 
     @classmethod
@@ -203,6 +235,7 @@ class ProgramState:
             program=str(data["program"]),
             installed=None if installed is None else InstalledState.from_dict(installed),
             pin=None if pin is None else PinState.from_dict(pin),
+            links=[LinkRecord.from_dict(link) for link in data.get("links", []) if isinstance(link, dict)],
             schema_version=int(data.get("schema_version", SCHEMA_VERSION)),
         )
 

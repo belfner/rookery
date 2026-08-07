@@ -16,6 +16,7 @@ from rookery.shell_script_program import (
     LEGACY_VERSION_LABEL,
     ShellScriptProgram,
 )
+from rookery.state import STATE_FILENAME
 from rookery.version import compare_versions
 from tests.relock_script_versions import unbumped
 from tests.script_versions import (
@@ -211,6 +212,54 @@ def test_install_accepts_the_bundled_version(tmp_path: Path) -> None:
     prog = _installed_at(tmp_path, "1.0.0")
     asyncio.run(prog.initialize(prog.version))
     assert prog.install_dir.exists()
+
+
+def test_generated_files_drop_a_renamed_script(tmp_path: Path) -> None:
+    """An update whose payload renamed a script must not leave the old one installed."""
+
+    class Renamer(ShellScriptProgram):
+        program_name = "renamer"
+        version = "1.0.0"
+        scripts = {"before": "echo one\n"}
+        man_pages = {"before.1": "old page\n"}
+
+    prog = Renamer()
+    prog.install_dir = tmp_path / "renamer"
+    prog.version_file = prog.install_dir / ".version"
+    prog.install_dir.mkdir(parents=True, exist_ok=True)
+    asyncio.run(prog.create_generated_files("1.0.0"))
+    assert (prog.install_dir / "before").exists()
+
+    Renamer.scripts = {"after": "echo two\n"}
+    Renamer.man_pages = {"after.1": "new page\n"}
+    asyncio.run(prog.create_generated_files("1.0.0"))
+
+    assert (prog.install_dir / "after").exists()
+    assert not (prog.install_dir / "before").exists()
+    assert (prog.install_dir / "man" / "after.1").exists()
+    assert not (prog.install_dir / "man" / "before.1").exists()
+
+
+def test_generated_files_keep_state_sentinels(tmp_path: Path) -> None:
+    """Clearing the payload must leave the version file and state file in place."""
+
+    class Keeper(ShellScriptProgram):
+        program_name = "keeper"
+        version = "1.0.0"
+        scripts = {"keeper": "echo hi\n"}
+
+    prog = Keeper()
+    prog.install_dir = tmp_path / "keeper"
+    prog.version_file = prog.install_dir / ".version"
+    prog.install_dir.mkdir(parents=True, exist_ok=True)
+    prog.version_file.write_text("1.0.0\n")
+    state_file = prog.install_dir / STATE_FILENAME
+    state_file.write_text("{}\n")
+
+    asyncio.run(prog.create_generated_files("1.0.0"))
+
+    assert prog.version_file.read_text() == "1.0.0\n"
+    assert state_file.read_text() == "{}\n"
 
 
 def test_missing_version_is_rejected() -> None:
