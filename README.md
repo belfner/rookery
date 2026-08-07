@@ -108,8 +108,7 @@ If rookery finds an install root that already exists but you cannot write into, 
 | dust | GitHub binary | Intuitive `du` alternative |
 | dysk | GitHub binary | Filesystem information tool |
 | eza | GitHub binary | Modern `ls` replacement |
-| fasttarutils | Python script | Multi-format tar compression/extraction (ftar/funtar) with parallel backends |
-| fastziputils | Shell script | Zip compression/extraction with pv progress bars |
+| fasttarutils | Python script | Multi-format tar, 7z, and zip compression/extraction (ftar/funtar) with parallel backends |
 | gdu | GitHub binary | Disk usage analyzer |
 | gping | GitHub binary | Ping with a graph |
 | hyperfine | GitHub binary | Command-line benchmarking tool |

@@ -300,7 +300,7 @@ class TestCreateRootFailureDiagnosis:
 class TestLinkCapabilities:
     """Capability reporting must use real program classes, not a populated DummyProgram."""
 
-    @pytest.mark.parametrize("name", ["tarssh", "kpod", "cuda-run", "fasttarutils", "fastziputils"])
+    @pytest.mark.parametrize("name", ["tarssh", "kpod", "cuda-run", "fasttarutils"])
     def test_shell_script_programs_report_binaries(self, name: str) -> None:
         """Regression: these derive binaries from `scripts`, so binary_files is empty."""
         prog = get_program(name)
