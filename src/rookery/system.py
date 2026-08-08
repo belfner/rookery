@@ -665,31 +665,22 @@ class SystemLinker:
         results = {"symlinks": False, "desktop": False, "man": False}
         cleared: set[str] = set()
 
-        # Remove binary symlinks
-        try:
-            for binary_path in program.get_binary_paths():
-                if self.remove_binary_symlink(binary_path.name):
-                    results["symlinks"] = True
-                    cleared.add(str(self.bin_dir / binary_path.name))
-        except FileNotFoundError:
-            # Program not fully installed, skip symlink removal
-            pass
+        # Remove the links the current manifest names. Each is checked against the link
+        # the manifest says should be there, so a path someone replaced with their own
+        # script or repointed elsewhere is theirs and stays. An install predating link
+        # recording has nothing in state, and is reached through here alone.
+        manifest = self.manifest_links(program)
+        for record in manifest if manifest is not None else []:
+            if not self._is_recorded_link(record) or not self._manages_link_path(Path(record.path)):
+                continue
+            if not self._remove_recorded_link(record):
+                continue
+            results["symlinks" if Path(record.path).parent == self.bin_dir else "man"] = True
+            cleared.add(record.path)
 
         # Remove desktop entry
         if self.remove_desktop_entry(program.name):
             results["desktop"] = True
-
-        # Remove man pages
-        try:
-            man_pages = program.get_man_pages()
-            for section, man_page in man_pages.items():
-                if self.remove_man_symlink(man_page.name, section):
-                    results["man"] = True
-                    actual_section = section.split(":")[0] if ":" in section else section
-                    cleared.add(str(self.man_dir / actual_section / man_page.name))
-        except FileNotFoundError:
-            # Program not fully installed, skip man page removal
-            pass
 
         def finish(state: ProgramState) -> None:
             # Every recorded link goes, not only the ones the manifest no longer names:

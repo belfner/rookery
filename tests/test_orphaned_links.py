@@ -314,3 +314,90 @@ def test_unlink_keeps_a_regular_file_at_a_recorded_path(tmp_path: Path, linker: 
 
     assert recorded.is_file()
     assert not recorded.is_symlink()
+
+
+def test_unlink_keeps_a_user_file_at_a_current_link_path(tmp_path: Path, linker: SystemLinker) -> None:
+    """Replacing a live link with your own script must not make uninstall delete it."""
+    prog = _program(tmp_path, {"payload": "echo hi\n"}, {})
+    linker.setup_program(prog)
+
+    replaced = linker.bin_dir / "payload"
+    replaced.unlink()
+    replaced.write_text("#!/bin/sh\n# my own wrapper\n")
+
+    linker.remove_program_links(prog)
+
+    assert replaced.is_file()
+    assert replaced.read_text() == "#!/bin/sh\n# my own wrapper\n"
+
+
+def test_unlink_keeps_a_current_link_path_repointed_elsewhere(tmp_path: Path, linker: SystemLinker) -> None:
+    prog = _program(tmp_path, {"payload": "echo hi\n"}, {})
+    linker.setup_program(prog)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.write_text("echo elsewhere\n")
+    repointed = linker.bin_dir / "payload"
+    repointed.unlink()
+    repointed.symlink_to(elsewhere)
+
+    linker.remove_program_links(prog)
+
+    assert repointed.is_symlink()
+    assert repointed.readlink() == elsewhere
+
+
+def test_unlink_still_removes_the_links_it_owns(tmp_path: Path, linker: SystemLinker) -> None:
+    """The ownership check must not stop uninstall removing its own links."""
+    prog = _program(tmp_path, {"payload": "echo hi\n"}, {"payload.1": "page\n"})
+    linker.setup_program(prog)
+
+    results = linker.remove_program_links(prog)
+
+    assert results["symlinks"] is True
+    assert results["man"] is True
+    assert not (linker.bin_dir / "payload").exists()
+    assert not (linker.man_dir / "man1" / "payload.1").exists()
+    assert prog.read_state().links == []
+
+
+def test_unlink_removes_links_for_an_install_predating_link_records(tmp_path: Path, linker: SystemLinker) -> None:
+    """An older install has no records, so the manifest walk is its only route."""
+    prog = _program(tmp_path, {"payload": "echo hi\n"}, {})
+    linker.setup_program(prog)
+
+    state = prog.read_state()
+    state.links = []
+    prog.write_state(state)
+
+    linker.remove_program_links(prog)
+
+    assert not (linker.bin_dir / "payload").exists()
+
+
+def test_uninstall_keeps_a_link_another_program_took_over(tmp_path: Path, linker: SystemLinker) -> None:
+    """Two programs can claim one command name; removing the first must not break the second."""
+
+    class Rival(ShellScriptProgram):
+        program_name = "rival"
+        version = "1.0.0"
+        scripts = {"shared": "echo rival\n"}
+
+    first = _program(tmp_path, {"shared": "echo first\n"}, {})
+    linker.setup_program(first)
+    assert (linker.bin_dir / "shared").readlink() == first.install_dir / "shared"
+
+    rival = Rival()
+    rival.install_dir = tmp_path / "rival"
+    rival.version_file = rival.install_dir / ".version"
+    rival.install_dir.mkdir(parents=True, exist_ok=True)
+    rival.version_file.write_text("1.0.0\n")
+    asyncio.run(rival.create_generated_files("1.0.0"))
+    linker.setup_program(rival)
+    assert (linker.bin_dir / "shared").readlink() == rival.install_dir / "shared"
+
+    # The first program is uninstalled; the link now belongs to the rival.
+    linker.remove_program_links(first)
+
+    assert (linker.bin_dir / "shared").is_symlink()
+    assert (linker.bin_dir / "shared").readlink() == rival.install_dir / "shared"
