@@ -403,3 +403,35 @@ def test_a_sibling_thread_still_waits_for_a_task_held_lock(program: DummyProgram
     waiter.join(timeout=5)
     holder.join(timeout=5)
     assert got_it.is_set()
+
+
+def test_unwritable_lock_dir_does_not_break_commands(program: DummyProgram, tmp_path: Path) -> None:
+    """A cache directory the user cannot write must not make every command fail."""
+    blocked = tmp_path / "blocked"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    try:
+        config.lock_dir = blocked / "locks"
+
+        with program_state_lock(program):
+            program.mutate_state(lambda state: state.links.append(LinkRecord("/bin/u", "/opt/u")))
+
+        assert [link.path for link in program.read_state().links] == ["/bin/u"]
+    finally:
+        blocked.chmod(0o700)
+
+
+def test_unwritable_lock_dir_does_not_break_the_async_lock(program: DummyProgram, tmp_path: Path) -> None:
+    blocked = tmp_path / "blocked-async"
+    blocked.mkdir()
+    blocked.chmod(0o500)
+    try:
+        config.lock_dir = blocked / "locks"
+
+        async def run() -> str:
+            async with program_state_lock_async(program):
+                return "ran"
+
+        assert asyncio.run(run()) == "ran"
+    finally:
+        blocked.chmod(0o700)

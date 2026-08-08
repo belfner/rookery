@@ -30,6 +30,7 @@ from datetime import (
 )
 from pathlib import Path
 from typing import (
+    IO,
     Any,
     Protocol,
 )
@@ -427,6 +428,29 @@ def _release_depth(depths: dict[str, int], key: str) -> None:
                 del owners[owner]
 
 
+def _open_lock_file(program: _ProgramLike) -> IO[str] | None:
+    """
+    Open a program's lock file for locking.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose lock file is wanted.
+
+    Returns
+    -------
+    IO[str] | None
+        The open handle, or None where the lock file cannot be created. A lock that
+        cannot exist cannot exclude anyone, and a cache directory the user cannot write
+        would otherwise make every command fail, so callers proceed as they did before
+        locking rather than refusing to run.
+    """
+    try:
+        return lock_path_for(program).open("a+")
+    except OSError:
+        return None
+
+
 @contextmanager
 def program_state_lock(program: _ProgramLike) -> Iterator[None]:
     """
@@ -447,8 +471,7 @@ def program_state_lock(program: _ProgramLike) -> Iterator[None]:
     None
         Control, with the lock held.
     """
-    lock_file = lock_path_for(program)
-    key = str(lock_file)
+    key = program.name
 
     # flock is held per open file description, so opening the file again on this thread
     # would block on the lock this thread already holds. Depth tracking makes an inner
@@ -462,7 +485,12 @@ def program_state_lock(program: _ProgramLike) -> Iterator[None]:
             yield
             return
 
-        with lock_file.open("a+") as handle:
+        handle = _open_lock_file(program)
+        if handle is None:
+            yield
+            return
+
+        with handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
             try:
                 yield
@@ -491,8 +519,7 @@ async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]
     None
         Control, with the lock held.
     """
-    lock_file = lock_path_for(program)
-    key = str(lock_file)
+    key = program.name
     depths = _owner_depths()
     held = depths.get(key, 0)
     depths[key] = held + 1
@@ -502,7 +529,12 @@ async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]
             yield
             return
 
-        with lock_file.open("a+") as handle:
+        handle = _open_lock_file(program)
+        if handle is None:
+            yield
+            return
+
+        with handle:
             while True:
                 try:
                     fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
