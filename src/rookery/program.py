@@ -13,6 +13,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rookery.config import config
+from rookery.file_io import (
+    atomic_write_text,
+    sweep_temp_files,
+)
 from rookery.install_resolution import get_active_resolution
 from rookery.installer import Installer
 from rookery.operations import (
@@ -263,6 +267,10 @@ class Program(ABC):
         try:
             # Ensure install directory exists with proper ownership
             self._ensure_install_dir()
+
+            # Reclaim the temporaries a previous run left behind when it was killed
+            # partway through a write, so they stay out of the tree this run produces.
+            sweep_temp_files(self.install_dir)
 
             # Phase 1: Initialize
             await self.initialize(version)
@@ -616,8 +624,7 @@ class Program(ABC):
 
     def write_version_file(self, version: str) -> None:
         """Write version to .version file."""
-        self.version_file.parent.mkdir(parents=True, exist_ok=True)
-        self.version_file.write_text(version + "\n")
+        atomic_write_text(self.version_file, version + "\n")
 
     async def get_metadata(self) -> ProgramMetadata:
         """

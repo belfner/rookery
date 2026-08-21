@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.file_io import atomic_symlink
 from rookery.shell_script_program import ShellScriptProgram
 
 
@@ -677,10 +678,7 @@ class KpodProgram(ShellScriptProgram):
         await super().create_generated_files(version)
 
         for name in _SUBCOMMAND_LINKS:
-            link_path = self.install_dir / name
-            if link_path.is_symlink() or link_path.exists():
-                link_path.unlink()
-            link_path.symlink_to("kpod")
+            atomic_symlink(self.install_dir / name, "kpod")
 
     def get_binary_paths(self) -> list[Path]:
         """

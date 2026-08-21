@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rookery.file_io import atomic_write_text
 from rookery.github_program import GitHubProgram
 
 
@@ -28,5 +29,8 @@ class AppImageProgram(GitHubProgram):
         """
         appimage_file = self.install_dir / f"{self.name}.AppImage"
         wrapper_script = self.install_dir / self.name
-        wrapper_script.write_text(f'#!/bin/bash\nexec "{appimage_file}" --no-sandbox "$@"\n')
-        wrapper_script.chmod(0o755)
+        atomic_write_text(
+            wrapper_script,
+            f'#!/bin/bash\nexec "{appimage_file}" --no-sandbox "$@"\n',
+            mode=0o755,
+        )

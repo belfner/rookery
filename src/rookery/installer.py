@@ -12,6 +12,7 @@ import zipfile
 from pathlib import Path
 
 from rookery.config import config
+from rookery.file_io import atomic_copy
 
 
 class Installer:
@@ -180,8 +181,7 @@ class Installer:
                     if fnmatch.fnmatch(rel_path, pattern):
                         # Copy to destination
                         dest_file = dest_dir / dest_name
-                        dest_file.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(file_path, dest_file)
+                        atomic_copy(file_path, dest_file)
                         extracted[pattern] = dest_file
                         matched = True
                         break

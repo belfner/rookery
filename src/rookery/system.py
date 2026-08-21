@@ -8,6 +8,11 @@ from contextlib import suppress
 from pathlib import Path
 
 from rookery.config import config
+from rookery.file_io import (
+    atomic_symlink,
+    atomic_write_text,
+    temp_name_for,
+)
 from rookery.path_utils import is_path_writable
 from rookery.program import Program
 from rookery.state import (
@@ -100,6 +105,61 @@ class SystemLinker:
             )
         return self.sudo_manager
 
+    def _place_as_root(self, manager: SudoManager, source: Path, destination: Path, mode: str) -> None:
+        """
+        Install a staged file at an elevated destination, replacing it atomically.
+
+        The file is copied into the destination's own directory under a temporary name,
+        which is where a rename onto the destination is atomic, and the directory is
+        created along the way. A copy that lands but fails to be renamed is cleaned up.
+
+        Parameters
+        ----------
+        manager : SudoManager
+            Validated sudo manager for the destination.
+        source : Path
+            Staged file holding the contents to install.
+        destination : Path
+            Final path of the entry.
+        mode : str
+            Permission bits for the installed file, in the octal form `install` takes.
+        """
+        staged = temp_name_for(destination)
+        try:
+            manager.run_as_root(["install", "-D", "-m", mode, "--", str(source), str(staged)])
+            manager.run_as_root(["mv", "-fT", "--", str(staged), str(destination)])
+        except BaseException:
+            with suppress(Exception):
+                manager.run_as_root(["rm", "-f", "--", str(staged)])
+            raise
+
+    def _link_as_root(self, manager: SudoManager, target: Path, link_path: Path) -> None:
+        """
+        Point an elevated symlink at a target, replacing it atomically.
+
+        The link is created under a temporary name in its own directory and renamed onto
+        the final name, so a caller resolving the link during a relink finds either the
+        old target or the new one. The directory is created along the way.
+
+        Parameters
+        ----------
+        manager : SudoManager
+            Validated sudo manager for the destination.
+        target : Path
+            Path the symlink points at.
+        link_path : Path
+            Path of the symlink to create.
+        """
+        manager.run_as_root(["mkdir", "-p", "--", str(link_path.parent)])
+        staged = temp_name_for(link_path)
+        try:
+            manager.run_as_root(["ln", "-s", "--", str(target), str(staged)])
+            manager.run_as_root(["mv", "-fT", "--", str(staged), str(link_path)])
+        except BaseException:
+            with suppress(Exception):
+                manager.run_as_root(["rm", "-f", "--", str(staged)])
+            raise
+
     def create_binary_symlink(self, target: Path, name: str | None = None) -> None:
         """
         Create symlink in system binary directory.
@@ -118,17 +178,9 @@ class SystemLinker:
 
         manager = self._elevate(link_path)
         if manager is not None:
-            # Remove existing symlink
-            if link_path.exists() or link_path.is_symlink():
-                manager.run_as_root(["rm", "-f", str(link_path)])
-
-            # Create new symlink
-            manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
+            self._link_as_root(manager, target, link_path)
         else:
-            # Direct operation (for testing or when already root)
-            if link_path.exists() or link_path.is_symlink():
-                link_path.unlink()
-            link_path.symlink_to(target)
+            atomic_symlink(link_path, target)
 
     def create_desktop_entry(
         self,
@@ -154,20 +206,16 @@ class SystemLinker:
 
         manager = self._elevate(desktop_file)
         if manager is not None:
-            # Write to temp file, then move with sudo
             with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".desktop") as tmp:
                 tmp.write(content_str)
                 tmp_path = tmp.name
 
             try:
-                manager.run_as_root(["mv", tmp_path, str(desktop_file)])
-                manager.run_as_root(["chmod", "644", str(desktop_file)])
+                self._place_as_root(manager, Path(tmp_path), desktop_file, "644")
             finally:
                 Path(tmp_path).unlink(missing_ok=True)
         else:
-            # Direct operation
-            desktop_file.write_text(content_str)
-            desktop_file.chmod(0o644)
+            atomic_write_text(desktop_file, content_str, mode=0o644)
 
     def update_desktop_database(self) -> None:
         """
@@ -203,22 +251,9 @@ class SystemLinker:
 
         manager = self._elevate(link_path)
         if manager is not None:
-            # Create section directory if needed
-            if not section_dir.exists():
-                manager.run_as_root(["mkdir", "-p", str(section_dir)])
-
-            # Remove existing symlink
-            if link_path.exists() or link_path.is_symlink():
-                manager.run_as_root(["rm", "-f", str(link_path)])
-
-            # Create new symlink
-            manager.run_as_root(["ln", "-sf", str(target), str(link_path)])
+            self._link_as_root(manager, target, link_path)
         else:
-            # Direct operation
-            section_dir.mkdir(parents=True, exist_ok=True)
-            if link_path.exists() or link_path.is_symlink():
-                link_path.unlink()
-            link_path.symlink_to(target)
+            atomic_symlink(link_path, target)
 
     def remove_man_symlink(self, name: str, section: str) -> bool:
         """

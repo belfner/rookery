@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,8 @@ from rich.progress import (
     Progress,
     TaskID,
 )
+
+from rookery.file_io import temp_name_for
 
 
 @dataclass
@@ -172,13 +175,25 @@ async def download_file(
         total = int(response.headers.get("content-length", 0))
         progress.update(task_id, total=total)
 
+        # A streamed body is written through a temporary beside the destination and
+        # renamed onto it, so an interrupted download leaves no partial file where the
+        # installer expects a complete one.
         dest.parent.mkdir(parents=True, exist_ok=True)
-        with dest.open("wb") as f:
-            downloaded = 0
-            async for chunk in await response.iter_content(chunk_size=8192):
-                f.write(chunk)
-                downloaded += len(chunk)
-                progress.update(task_id, completed=downloaded)
+        partial = temp_name_for(dest)
+        try:
+            with partial.open("wb") as f:
+                downloaded = 0
+                async for chunk in await response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    progress.update(task_id, completed=downloaded)
+                f.flush()
+                os.fsync(f.fileno())
+            partial.replace(dest)
+        except BaseException:
+            with suppress(OSError):
+                partial.unlink()
+            raise
     finally:
         if response is not None:
             await response.close()

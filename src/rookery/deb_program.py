@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rookery.cli_helpers import RUN
+from rookery.file_io import atomic_write_text
 from rookery.github_program import GitHubProgram
 from rookery.link_status import LinkStatus
 from rookery.sudo_requirement import SudoRequirement
@@ -79,7 +80,7 @@ class DebProgram(GitHubProgram):
         self.install_dir.mkdir(parents=True, exist_ok=True)
 
         package_metadata = self.install_dir / ".package_name"
-        package_metadata.write_text(self.deb_package_name)
+        atomic_write_text(package_metadata, self.deb_package_name)
 
     def get_binary_paths(self) -> list[Path]:
         """

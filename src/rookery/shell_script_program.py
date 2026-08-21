@@ -8,6 +8,10 @@ from dataclasses import replace
 from pathlib import Path
 
 from rookery.cli_helpers import RUN
+from rookery.file_io import (
+    atomic_write_text,
+    is_temp_name,
+)
 from rookery.operations import InstallOperation
 from rookery.program import (
     LinkCapabilities,
@@ -201,13 +205,15 @@ class ShellScriptProgram(Program):
         Everything a script program keeps in its install directory is generated, apart
         from the dot-prefixed `.version` and `.rookery-state.json` sentinels. Clearing
         before a write means an update to a payload that dropped or renamed a script,
-        man page, or symlink leaves the old entry behind on disk.
+        man page, or symlink leaves the old entry behind on disk. The sweep also
+        reclaims the temporaries an interrupted atomic write leaves behind, which carry
+        a dot prefix of their own.
         """
         if not self.install_dir.exists():
             return
 
         for entry in self.install_dir.iterdir():
-            if entry.name.startswith("."):
+            if entry.name.startswith(".") and not is_temp_name(entry.name):
                 continue
             if entry.is_dir() and not entry.is_symlink():
                 shutil.rmtree(entry)
@@ -231,18 +237,12 @@ class ShellScriptProgram(Program):
 
         # Write scripts and make them executable
         for script_name, content in self.scripts.items():
-            script_path = self.install_dir / script_name
-            script_path.write_text(content)
-            script_path.chmod(0o755)
+            atomic_write_text(self.install_dir / script_name, content, mode=0o755)
 
         # Write man pages if any
-        if len(self.man_pages) > 0:
-            man_dir = self.install_dir / "man"
-            man_dir.mkdir(parents=True, exist_ok=True)
-
-            for man_filename, content in self.man_pages.items():
-                man_path = man_dir / man_filename
-                man_path.write_text(content)
+        man_dir = self.install_dir / "man"
+        for man_filename, content in self.man_pages.items():
+            atomic_write_text(man_dir / man_filename, content)
 
     def get_binary_paths(self) -> list[Path]:
         """

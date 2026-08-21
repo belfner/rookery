@@ -36,6 +36,7 @@ from typing import (
 )
 
 from rookery.config import config
+from rookery.file_io import atomic_write_text
 
 
 STATE_FILENAME = ".rookery-state.json"
@@ -329,8 +330,8 @@ def write_program_state_atomic(program: _ProgramLike, state: ProgramState) -> No
     """
     Atomically write structured state for a program.
 
-    The install directory must already exist (created during install); this function does
-    not create it, to avoid recording state for an uninstalled program.
+    State lands beside the install directory that install has already created, so a
+    program whose directory is gone stays unrecorded.
 
     Parameters
     ----------
@@ -340,9 +341,7 @@ def write_program_state_atomic(program: _ProgramLike, state: ProgramState) -> No
         State to persist.
     """
     path = state_path_for(program)
-    tmp_path = path.with_name(f"{path.name}.tmp")
-    tmp_path.write_text(json.dumps(state.to_dict(), indent=2) + "\n")
-    tmp_path.replace(path)
+    atomic_write_text(path, json.dumps(state.to_dict(), indent=2) + "\n", create_parents=False)
 
 
 def lock_path_for(program: _ProgramLike) -> Path:

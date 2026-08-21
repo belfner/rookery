@@ -17,6 +17,14 @@ from pathlib import Path
 
 import niquests
 
+from rookery.file_io import (
+    atomic_copy,
+    atomic_merge_tree,
+    atomic_replace_path,
+    atomic_write_bytes,
+    discard_path,
+    temp_name_for,
+)
 from rookery.installer import Installer
 
 
@@ -85,7 +93,7 @@ class DownloadArchive(InstallOperation):
             response = await client.get(self.url)
             response.raise_for_status()
             assert response.content is not None
-            download_path.write_bytes(response.content)
+            atomic_write_bytes(download_path, response.content)
 
         context.downloads[self.operation_id] = download_path
         context.temp_files.append(download_path)
@@ -182,35 +190,40 @@ class ExtractArchive(InstallOperation):
             Installation context.
         """
         archive_path = context.downloads[self.archive_id]
-        dest_dir = context.install_dir
 
-        # Handle extract_to_subdir: remove old directory and extract into it
-        if self.extract_to_subdir:
-            dest_dir = context.install_dir / self.extract_to_subdir
-            if dest_dir.exists():
-                shutil.rmtree(dest_dir)
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            context.installer.extract_archive(archive_path, dest_dir)
-            return
+        # The archive is unpacked into a staging directory beside its destination and
+        # moved into place by rename, so a run interrupted mid-unpack leaves the
+        # previously installed tree serving. Staging beside the destination keeps both
+        # on one filesystem, which is what makes the rename a rename.
+        anchor = context.install_dir / (self.extract_to_subdir or self.rename_top_level or "payload")
+        staging = temp_name_for(anchor)
+        try:
+            context.installer.extract_archive(archive_path, staging)
 
-        # Default extraction to install_dir
-        context.installer.extract_archive(archive_path, dest_dir)
+            if self.extract_to_subdir:
+                atomic_replace_path(staging, context.install_dir / self.extract_to_subdir)
+                return
 
-        # Handle rename_top_level: find single top-level directory and rename it
-        if self.rename_top_level:
-            # Find extracted top-level directories (exclude the target name to avoid confusion)
-            new_path = dest_dir / self.rename_top_level
-            extracted_items = [item for item in dest_dir.iterdir() if item.is_dir() and item != new_path]
+            renamed = False
+            if self.rename_top_level:
+                # An archive that unpacks to a single directory has that directory
+                # renamed to the declared name, and anything else the archive carried
+                # merges in alongside it. Renaming the tree over a running binary's
+                # directory replaces the entry rather than writing through it, which is
+                # what keeps ETXTBSY off an executable currently in use.
+                unpacked = [item for item in staging.iterdir() if item.is_dir() and item.name != self.rename_top_level]
+                if len(unpacked) == 1:
+                    atomic_replace_path(unpacked[0], context.install_dir / self.rename_top_level)
+                    renamed = True
 
-            # Should be exactly one top-level directory
-            if len(extracted_items) == 1:
-                old_path = extracted_items[0]
-
-                # Remove existing target directory to avoid ETXTBSY on running binaries
-                if new_path.exists():
-                    shutil.rmtree(new_path)
-
-                shutil.move(str(old_path), str(new_path))
+            for item in sorted(staging.iterdir()):
+                # A rename gives the declared name to the directory it chose, so an
+                # archive entry arriving under that same name is superseded by it.
+                if renamed and item.name == self.rename_top_level:
+                    continue
+                atomic_merge_tree(item, context.install_dir / item.name)
+        finally:
+            discard_path(staging)
 
 
 class DownloadFile(InstallOperation):
@@ -240,13 +253,12 @@ class DownloadFile(InstallOperation):
             Installation context.
         """
         dest = context.install_dir / self.dest_path
-        dest.parent.mkdir(parents=True, exist_ok=True)
 
         async with niquests.AsyncSession(timeout=300.0) as client:
             response = await client.get(self.url)
             response.raise_for_status()
             assert response.content is not None
-            dest.write_bytes(response.content)
+            atomic_write_bytes(dest, response.content)
 
 
 class MakeExecutable(InstallOperation):
@@ -451,5 +463,4 @@ class BuildFromSource(InstallOperation):
                 if len(matches) == 0:
                     raise RuntimeError(f"Build artifact '{pattern}' not found after build")
                 dest = context.install_dir / dest_rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(matches[0], dest)
+                atomic_copy(matches[0], dest)
