@@ -23,7 +23,8 @@ EXTRAS='nvcc,cudart,cccl,nvrtc'
 PYVER=''
 KEEP=0
 QUIET=0
-WITH_REQS=''
+WITH_SPECS=''
+WITH_REQFILES=''
 
 usage() {
 	cat <<EOF
@@ -93,14 +94,32 @@ log() {
 	[ "$QUIET" -eq 1 ] || printf '%s: %s\n' "$PROG" "$*" >&2
 }
 
-# uv resolves a nested '-r' line relative to the file holding it, and the
-# generated requirements file lives in the temp root, so paths are absolutised
-# here against the directory the user invoked from.
-abspath() {
-	case $1 in
-	/*) printf '%s' "$1" ;;
-	*) printf '%s/%s' "$PWD" "$1" ;;
-	esac
+# Extra packages are installed as direct 'uv pip install' arguments rather
+# than through a generated requirements file, so a spec or path holding '#'
+# is not truncated as a requirements-file comment. Positional parameters are
+# local to a function, so rebuilding them here leaves the script's own "$@"
+# (the user's command, set further down) untouched.
+install_extra_packages() {
+	set --
+	_ifs=$IFS
+	IFS='
+'
+	for _spec in $WITH_SPECS; do
+		IFS=$_ifs
+		set -- "$@" "$_spec"
+		IFS='
+'
+	done
+	for _reqfile in $WITH_REQFILES; do
+		IFS=$_ifs
+		set -- "$@" -r "$_reqfile"
+		IFS='
+'
+	done
+	IFS=$_ifs
+	[ $# -eq 0 ] && return 0
+	log 'installing extra packages'
+	uv pip install $UVQ --python "$VENV/bin/python" "$@" >&2
 }
 
 # ---------------------------------------------------------------- options ---
@@ -131,26 +150,26 @@ while [ $# -gt 0 ]; do
 		;;
 	-w | --with)
 		[ $# -ge 2 ] || die "$1 requires an argument"
-		WITH_REQS="$WITH_REQS$2
+		WITH_SPECS="$WITH_SPECS$2
 "
 		shift 2
 		;;
 	--with=*)
-		WITH_REQS="$WITH_REQS${1#--with=}
+		WITH_SPECS="$WITH_SPECS${1#--with=}
 "
 		shift
 		;;
 	-r | --requirements)
 		[ $# -ge 2 ] || die "$1 requires an argument"
 		[ -f "$2" ] || die "requirements file not found: $2"
-		WITH_REQS="$WITH_REQS-r $(abspath "$2")
+		WITH_REQFILES="$WITH_REQFILES$2
 "
 		shift 2
 		;;
 	--requirements=*)
 		_r=${1#--requirements=}
 		[ -f "$_r" ] || die "requirements file not found: $_r"
-		WITH_REQS="$WITH_REQS-r $(abspath "$_r")
+		WITH_REQFILES="$WITH_REQFILES$_r
 "
 		shift
 		;;
@@ -359,14 +378,7 @@ log "CUDA_HOME=$CUDA_HOME"
 
 # --------------------------------------------------------- extra packages ---
 
-# Requirement lines go through a file so a specifier containing spaces, commas
-# or quotes reaches uv intact.
-if [ -n "$WITH_REQS" ]; then
-	REQFILE="$TMPROOT/requirements.txt"
-	printf '%s' "$WITH_REQS" >"$REQFILE"
-	log 'installing extra packages'
-	uv pip install $UVQ --python "$VENV/bin/python" -r "$REQFILE" >&2
-fi
+install_extra_packages
 
 # ------------------------------------------------------------------- run ----
 
@@ -382,7 +394,7 @@ class CudaRunProgram(ShellScriptProgram):
     """Run a command inside a throwaway uv environment holding an NVIDIA CUDA toolkit."""
 
     program_name = "cuda-run"
-    version = "1.1.0"
+    version = "1.1.1"
     scripts = {
         "cuda-run": CUDA_RUN_SCRIPT,
     }
