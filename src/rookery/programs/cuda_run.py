@@ -11,7 +11,8 @@ CUDA_RUN_SCRIPT = r"""#!/bin/sh
 #
 # The toolkit lands under site-packages/nvidia/cuXX. This script locates it,
 # patches the missing unversioned .so symlinks, exports CUDA_HOME / PATH /
-# LD_LIBRARY_PATH, then execs your command. The environment is deleted on exit.
+# LD_LIBRARY_PATH, installs any -w/--with packages into the same environment,
+# then runs your command. The environment is deleted on exit.
 #
 # POSIX sh. Requires: uv.
 
@@ -22,6 +23,7 @@ EXTRAS='nvcc,cudart,cccl,nvrtc'
 PYVER=''
 KEEP=0
 QUIET=0
+WITH_REQS=''
 
 usage() {
 	cat <<EOF
@@ -51,6 +53,13 @@ Options:
                       npp nvcc nvdisasm nvfatbin nvjitlink nvjpeg nvml
                       nvptxcompiler nvrtc nvtx nvvm opencl profiler sanitizer
                       tileiras
+  -w, --with SPEC     Extra package to install into the environment. Repeatable.
+                      Installed after the toolkit, with CUDA_HOME, PATH and
+                      LD_LIBRARY_PATH already set, so packages that compile CUDA
+                      extensions from source find nvcc and the toolkit headers.
+  -r, --requirements FILE
+                      Requirements file to install alongside -w/--with.
+                      Repeatable.
   -k, --keep          Do not delete the environment; print its path on exit.
   -q, --quiet         Suppress progress output on stderr.
   -h, --help          Show this help.
@@ -63,8 +72,10 @@ command operate on the same environment as the toolkit.
 
 Examples:
   $PROG 13 nvcc --version
-  $PROG -p 3.12 13.3 sh -c 'uv pip install torch && python -c "import torch"'
   $PROG -a 13 sh -c 'nvcc x.cu -o x -lcublas -lcufft'
+  $PROG -p 3.12 -w torch 13.3 python -c 'import torch; print(torch.version.cuda)'
+  $PROG -w numpy -w 'cupy-cuda13x>=13' 13 python bench.py
+  $PROG -r requirements.txt 13 python train.py
   $PROG 13 -- --help-me-script
   $PROG -k 13                       # interactive shell, keep the env
 
@@ -80,6 +91,16 @@ die() {
 
 log() {
 	[ "$QUIET" -eq 1 ] || printf '%s: %s\n' "$PROG" "$*" >&2
+}
+
+# uv resolves a nested '-r' line relative to the file holding it, and the
+# generated requirements file lives in the temp root, so paths are absolutised
+# here against the directory the user invoked from.
+abspath() {
+	case $1 in
+	/*) printf '%s' "$1" ;;
+	*) printf '%s/%s' "$PWD" "$1" ;;
+	esac
 }
 
 # ---------------------------------------------------------------- options ---
@@ -106,6 +127,31 @@ while [ $# -gt 0 ]; do
 		;;
 	--extras=*)
 		EXTRAS=${1#--extras=}
+		shift
+		;;
+	-w | --with)
+		[ $# -ge 2 ] || die "$1 requires an argument"
+		WITH_REQS="$WITH_REQS$2
+"
+		shift 2
+		;;
+	--with=*)
+		WITH_REQS="$WITH_REQS${1#--with=}
+"
+		shift
+		;;
+	-r | --requirements)
+		[ $# -ge 2 ] || die "$1 requires an argument"
+		[ -f "$2" ] || die "requirements file not found: $2"
+		WITH_REQS="$WITH_REQS-r $(abspath "$2")
+"
+		shift 2
+		;;
+	--requirements=*)
+		_r=${1#--requirements=}
+		[ -f "$_r" ] || die "requirements file not found: $_r"
+		WITH_REQS="$WITH_REQS-r $(abspath "$_r")
+"
 		shift
 		;;
 	-k | --keep)
@@ -311,6 +357,17 @@ unset PYTHONHOME 2>/dev/null || :
 
 log "CUDA_HOME=$CUDA_HOME"
 
+# --------------------------------------------------------- extra packages ---
+
+# Requirement lines go through a file so a specifier containing spaces, commas
+# or quotes reaches uv intact.
+if [ -n "$WITH_REQS" ]; then
+	REQFILE="$TMPROOT/requirements.txt"
+	printf '%s' "$WITH_REQS" >"$REQFILE"
+	log 'installing extra packages'
+	uv pip install $UVQ --python "$VENV/bin/python" -r "$REQFILE" >&2
+fi
+
 # ------------------------------------------------------------------- run ----
 
 set +e
@@ -325,7 +382,7 @@ class CudaRunProgram(ShellScriptProgram):
     """Run a command inside a throwaway uv environment holding an NVIDIA CUDA toolkit."""
 
     program_name = "cuda-run"
-    version = "1.0.0"
+    version = "1.1.0"
     scripts = {
         "cuda-run": CUDA_RUN_SCRIPT,
     }

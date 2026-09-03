@@ -123,6 +123,13 @@ class StorageExplorerProgram(Program):
         """
         Get desktop entry configuration.
 
+        The launcher icon is the branded ``StorageExplorerColor.svg`` from the
+        application's own media directory. Upstream's build passes the Linux tarball
+        through a UTF-8 decode that substitutes U+FFFD for every byte outside the ASCII
+        range, which leaves each shipped PNG, ``out/app/icon.png`` among them, carrying a
+        mangled signature that icon loaders reject. The SVGs are text and survive that
+        pass intact.
+
         Returns
         -------
         dict[str, str]
@@ -137,7 +144,16 @@ class StorageExplorerProgram(Program):
         if not executable.exists():
             raise FileNotFoundError(f"StorageExplorer binary not found at {executable}")
 
-        icon_path = self.install_dir / "StorageExplorer" / "resources" / "app" / "out" / "app" / "icon.png"
+        icon_path = (
+            self.install_dir
+            / "StorageExplorer"
+            / "resources"
+            / "app"
+            / "out"
+            / "app"
+            / "media"
+            / "StorageExplorerColor.svg"
+        )
         if not icon_path.exists():
             raise FileNotFoundError(f"StorageExplorer icon not found at {icon_path}")
 

@@ -27,6 +27,28 @@ class IntegrationPermissionError(Exception):
     """A destination needs elevation that the caller did not validate."""
 
 
+def _render_desktop_entry(entry: dict[str, str]) -> str:
+    """
+    Render desktop entry fields into the file contents they describe.
+
+    Writing an entry and deciding whether the installed one is still current both go
+    through here, so the comparison is against the exact text a write would produce.
+
+    Parameters
+    ----------
+    entry : dict[str, str]
+        Desktop entry fields (Name, Exec, Icon, etc.).
+
+    Returns
+    -------
+    str
+        Full contents of the .desktop file, newline terminated.
+    """
+    lines = ["[Desktop Entry]"]
+    lines.extend(f"{key}={value}" for key, value in entry.items())
+    return "\n".join(lines) + "\n"
+
+
 class SystemLinker:
     """
     Manages symlinks, desktop entries, and man page links.
@@ -198,11 +220,7 @@ class SystemLinker:
             Desktop entry fields (Name, Exec, Icon, etc.).
         """
         desktop_file = self.desktop_dir / f"{name}.desktop"
-
-        content = ["[Desktop Entry]"]
-        for key, value in entry.items():
-            content.append(f"{key}={value}")
-        content_str = "\n".join(content) + "\n"
+        content_str = _render_desktop_entry(entry)
 
         manager = self._elevate(desktop_file)
         if manager is not None:
@@ -216,6 +234,33 @@ class SystemLinker:
                 Path(tmp_path).unlink(missing_ok=True)
         else:
             atomic_write_text(desktop_file, content_str, mode=0o644)
+
+    def desktop_entry_is_current(self, name: str, entry: dict[str, str]) -> bool:
+        """
+        Report whether the installed desktop entry already holds the given fields.
+
+        A program's entry is generated from paths and metadata that move between
+        versions, so an entry that merely exists can still name an icon or executable the
+        current install no longer provides. An entry that cannot be read is reported as
+        out of date, which has the caller rewrite it.
+
+        Parameters
+        ----------
+        name : str
+            Desktop entry filename (without .desktop extension).
+        entry : dict[str, str]
+            Desktop entry fields the file should hold.
+
+        Returns
+        -------
+        bool
+            True when the file on disk matches what these fields render to.
+        """
+        desktop_file = self.desktop_dir / f"{name}.desktop"
+        try:
+            return desktop_file.read_bytes() == _render_desktop_entry(entry).encode()
+        except OSError:
+            return False
 
     def update_desktop_database(self) -> None:
         """
@@ -597,71 +642,6 @@ class SystemLinker:
 
         return removed
 
-    def links_need_update(self, program: Program) -> bool:
-        """
-        Check if program links need to be created or updated.
-
-        Parameters
-        ----------
-        program : Program
-            Program to check.
-
-        Returns
-        -------
-        bool
-            True if any links are missing or need updating, False if all correct.
-        """
-        # Program not installed, no links needed
-        if not program.install_dir.exists():
-            return False
-
-        # Check binary symlinks
-        binary_paths = program.get_binary_paths()
-        for binary_path in binary_paths:
-            if not binary_path.exists():
-                continue
-            link_path = self.bin_dir / binary_path.name
-            # Link doesn't exist or is broken
-            if not link_path.exists() and not link_path.is_symlink():
-                return True
-            # Link exists but points to wrong location
-            if link_path.is_symlink():
-                try:
-                    if link_path.resolve() != binary_path.resolve():
-                        return True
-                except (OSError, RuntimeError):
-                    # Broken symlink
-                    return True
-
-        # Check desktop entry
-        desktop_entry = program.get_desktop_entry()
-        if desktop_entry is not None:
-            desktop_file = self.desktop_dir / f"{program.name}.desktop"
-            if not desktop_file.exists():
-                return True
-
-        # Check man pages
-        man_pages = program.get_man_pages()
-        for section, man_page in man_pages.items():
-            if not man_page.exists():
-                continue
-            # Extract actual section from compound key if present
-            actual_section = section.split(":")[0] if ":" in section else section
-            link_path = self.man_dir / actual_section / man_page.name
-            # Link doesn't exist or is broken
-            if not link_path.exists() and not link_path.is_symlink():
-                return True
-            # Link exists but points to wrong location
-            if link_path.is_symlink():
-                try:
-                    if link_path.resolve() != man_page.resolve():
-                        return True
-                except (OSError, RuntimeError):
-                    # Broken symlink
-                    return True
-
-        return False
-
     def remove_program_links(self, program: Program) -> dict[str, bool]:
         """
         Remove all system links for program including man pages.
@@ -754,7 +734,9 @@ class SystemLinker:
         -------
         dict[str, bool]
             Results dictionary with keys "symlinks", "desktop", and "man".
-            True indicates NEW links were created, False means all existed.
+            True indicates this call wrote that kind of link: a symlink or man page
+            that was missing or misdirected, or a desktop entry whose contents differed
+            from the fields the program declares.
         """
         results = {"symlinks": False, "desktop": False, "man": False}
 
@@ -785,7 +767,7 @@ class SystemLinker:
         Returns
         -------
         dict[str, bool]
-            The accumulator, with True for each kind of link newly created.
+            The accumulator, with True for each kind of link this call wrote.
         """
         # Check each binary symlink
         for binary_path in program.get_binary_paths():
@@ -811,11 +793,9 @@ class SystemLinker:
 
         # Check desktop entry
         desktop_entry = program.get_desktop_entry()
-        if desktop_entry is not None:
-            desktop_file = self.desktop_dir / f"{program.name}.desktop"
-            if not desktop_file.exists():
-                self.create_desktop_entry(program.name, desktop_entry)
-                results["desktop"] = True
+        if desktop_entry is not None and not self.desktop_entry_is_current(program.name, desktop_entry):
+            self.create_desktop_entry(program.name, desktop_entry)
+            results["desktop"] = True
 
         # Check man page symlinks
         for section, man_page in program.get_man_pages().items():
