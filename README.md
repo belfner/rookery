@@ -115,7 +115,7 @@ If rookery finds an install root that already exists but you cannot write into, 
 | imcat | GitHub source | 24-bit terminal image viewer, compiled from source |
 | just | GitHub binary | Command runner |
 | kpod | Shell script | `kubectl` wrappers that resolve a pod by name prefix |
-| mc | GitHub binary | MinIO Client for S3-compatible object storage |
+| mc | Standalone | MinIO Client for S3-compatible object storage |
 | netron | GitHub .deb | Neural network model viewer |
 | nvim | GitHub binary | Hyperextensible Vim-based editor |
 | storageexplorer | GitHub binary | Azure Storage Explorer |
