@@ -51,7 +51,7 @@ The runner is ephemeral, the managed system is not. Clearing or refreshing uv's 
 | Explicit latest | `uvx rookery@latest <cmd>` | checking for a new release | forces a latest-version check |
 | Ignore installed tool | `uvx --isolated rookery <cmd>` | bypassing a persistent install | ignores an installed uv tool; does not refresh the cache |
 | Persistent install | `uv tool install rookery` | frequent use, shell completion | `uv tool upgrade rookery` |
-| Pinned | `uvx rookery@0.8.0 <cmd>` | scripts and automation | fixed until you edit it |
+| Pinned | `uvx rookery@0.9.0 <cmd>` | scripts and automation | fixed until you edit it |
 
 Isolation and freshness are independent: `--isolated` ignores an installed tool but does not refresh the cache. Use `uvx --isolated rookery@latest` if you want both.
 
