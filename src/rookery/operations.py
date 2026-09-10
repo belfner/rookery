@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -26,6 +28,10 @@ from rookery.file_io import (
     temp_name_for,
 )
 from rookery.installer import Installer
+
+
+# Digest shape published by the "<file>.sha256sum" convention: 64 lowercase hex characters.
+SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass
@@ -229,7 +235,7 @@ class ExtractArchive(InstallOperation):
 class DownloadFile(InstallOperation):
     """Download single file directly."""
 
-    def __init__(self, url: str, dest_path: str) -> None:
+    def __init__(self, url: str, dest_path: str, checksum_url: str | None = None) -> None:
         """
         Initialize file download operation.
 
@@ -239,13 +245,22 @@ class DownloadFile(InstallOperation):
             URL to download from.
         dest_path : str
             Destination path relative to install_dir.
+        checksum_url : str | None
+            URL of a text file whose first whitespace-separated field is the expected
+            SHA-256 hex digest, as published alongside a "<file>.sha256sum" convention.
+            None downloads without verification, by default None.
         """
         self.url = url
         self.dest_path = dest_path
+        self.checksum_url = checksum_url
 
     async def execute(self, context: InstallContext) -> None:
         """
         Download file directly to destination.
+
+        The payload is held in memory and verified against the published checksum before
+        the destination is written, so the installed path carries verified bytes and a
+        previously installed file keeps serving through a failed download.
 
         Parameters
         ----------
@@ -258,7 +273,43 @@ class DownloadFile(InstallOperation):
             response = await client.get(self.url)
             response.raise_for_status()
             assert response.content is not None
-            atomic_write_bytes(dest, response.content)
+            payload = response.content
+
+        if self.checksum_url is not None:
+            await self._verify(payload, self.checksum_url)
+
+        atomic_write_bytes(dest, payload)
+
+    async def _verify(self, payload: bytes, checksum_url: str) -> None:
+        """
+        Compare the payload's digest against the published checksum.
+
+        Parameters
+        ----------
+        payload : bytes
+            Downloaded file contents.
+        checksum_url : str
+            URL of the published checksum file.
+
+        Raises
+        ------
+        RuntimeError
+            If the checksum file carries no SHA-256 hex digest, or the digest disagrees
+            with the payload.
+        """
+        async with niquests.AsyncSession(timeout=30.0) as client:
+            response = await client.get(checksum_url)
+            response.raise_for_status()
+            checksum_text = response.text or ""
+
+        fields = checksum_text.split()
+        expected = fields[0].lower() if len(fields) > 0 else ""
+        if SHA256_HEX_PATTERN.match(expected) is None:
+            raise RuntimeError(f"Checksum file at {checksum_url} carries no SHA-256 digest")
+
+        digest = hashlib.sha256(payload).hexdigest()
+        if digest != expected:
+            raise RuntimeError(f"Checksum mismatch for {self.dest_path}: expected {expected}, got {digest}")
 
 
 class MakeExecutable(InstallOperation):
