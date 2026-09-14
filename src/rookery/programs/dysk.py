@@ -47,7 +47,8 @@ class DyskProgram(GitHubProgram):
         """
         Get installation operations.
 
-        dysk extracts to build/x86_64-unknown-linux-gnu/ directory.
+        Release zips place the binary under a per-target directory; older releases
+        nest that under build/, so patterns match either layout.
 
         Parameters
         ----------
@@ -70,9 +71,8 @@ class DyskProgram(GitHubProgram):
             ExtractFiles(
                 "dysk",
                 {
-                    "build/x86_64-unknown-linux-gnu/dysk": "dysk",
-                    "build/man/dysk.1": "dysk.1",
-                    "build/completion/*": "completion/",
+                    "*x86_64-unknown-linux-gnu/dysk": "dysk",
+                    "*man/dysk.1": "dysk.1",
                 },
             ),
             MakeExecutable("dysk"),
