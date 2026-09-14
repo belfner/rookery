@@ -1,6 +1,6 @@
 [project]
 name = "rookery"
-version = "0.9.0"
+version = "0.9.1"
 description = "Rookery - package manager for third-party development tools"
 readme = "README.md"
 authors = [
