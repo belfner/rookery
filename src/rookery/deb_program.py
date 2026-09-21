@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from rookery.cli_helpers import RUN
 from rookery.file_io import atomic_write_text
 from rookery.github_program import GitHubProgram
 from rookery.link_status import LinkStatus
+from rookery.program import Availability
 from rookery.sudo_requirement import SudoRequirement
 
 
@@ -49,6 +51,23 @@ class DebProgram(GitHubProgram):
         super().__init__()
         if not self.deb_package_name:
             raise ValueError(f"{self.__class__.__name__} must define deb_package_name")
+
+    def host_availability(self) -> Availability:
+        """
+        Require the apt tooling the installer shells out to.
+
+        Returns
+        -------
+        Availability
+            ``ok`` is True when the apt and dpkg commands the installer runs are on PATH;
+            otherwise the reason names the missing tools.
+        """
+        missing = [tool for tool in ("apt", "apt-get", "apt-cache", "dpkg") if shutil.which(tool) is None]
+        if len(missing) == 0:
+            return Availability(ok=True)
+        return Availability(
+            ok=False, reason=f"installs through apt, which is missing on this host ({', '.join(missing)})"
+        )
 
     def pin_warning(self) -> str | None:
         """

@@ -12,6 +12,7 @@ from rookery.path_utils import (
     check_path_in_user_path_env,
     requires_sudo,
 )
+from rookery.program import Program
 from rookery.sudo import SudoManager
 
 
@@ -111,3 +112,54 @@ def check_and_warn_path(console: Console) -> None:
             "[dim]Add this to your ~/.bashrc or ~/.zshrc:[/]\n"
             '[cyan]export PATH="$HOME/.local/bin:$PATH"[/]\n'
         )
+
+
+def exit_if_unavailable(console: Console, program: Program) -> None:
+    """
+    Exit when an explicitly named program cannot install on this host.
+
+    Parameters
+    ----------
+    console : Console
+        Rich console for output.
+    program : Program
+        Program the user named on the command line.
+
+    Raises
+    ------
+    typer.Exit
+        The program's installer depends on a tool this host lacks.
+    """
+    availability = program.host_availability()
+    if availability.ok is False:
+        console.print(f"[red]Error: {program.name} {availability.reason}.[/]")
+        raise typer.Exit(1)
+
+
+def drop_unavailable(console: Console, programs: list[Program]) -> list[Program]:
+    """
+    Keep the programs this host can install, reporting each one it cannot.
+
+    Used by bulk commands, where one program's missing tooling should hold up
+    neither the others nor the privilege prompt.
+
+    Parameters
+    ----------
+    console : Console
+        Rich console for output.
+    programs : list[Program]
+        Candidate programs.
+
+    Returns
+    -------
+    list[Program]
+        The subset whose installers can run here, in the original order.
+    """
+    kept: list[Program] = []
+    for program in programs:
+        availability = program.host_availability()
+        if availability.ok:
+            kept.append(program)
+        else:
+            console.print(f"[yellow]Skipped {program.name}: {availability.reason}[/]")
+    return kept

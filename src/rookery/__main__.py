@@ -26,6 +26,8 @@ from rookery import __version__
 from rookery.cli_helpers import (
     RUN,
     check_and_warn_path,
+    drop_unavailable,
+    exit_if_unavailable,
     validate_sudo_if_needed,
     validate_sudo_or_exit,
 )
@@ -229,6 +231,8 @@ def _install_single(
         console.print(f"[red]Error: {e}[/]")
         raise typer.Exit(1) from None
 
+    exit_if_unavailable(console, prog)
+
     if requested is not None and requested != "latest" and not prog.supports_exact_versions():
         console.print(f"[yellow]{name} does not support installing an exact version yet.[/]")
         console.print(f"[yellow]Use `{RUN} versions {name}` to see what is available.[/]")
@@ -371,9 +375,12 @@ def list_command(
         if prog.version_file.exists():
             current = prog.read_version_file()
             status = "Installed"
-        else:
+        elif prog.host_availability().ok:
             current = "[dim]—[/dim]"
             status = "[dim]Available[/dim]"
+        else:
+            current = "[dim]—[/dim]"
+            status = "[dim]Unavailable[/dim]"
 
         table.add_row(
             prog.name,
@@ -443,6 +450,11 @@ def install_command(
             console.print("[green]All programs are already installed[/]")
             return
 
+        uninstalled = drop_unavailable(console, uninstalled)
+        if len(uninstalled) == 0:
+            console.print("[yellow]No remaining program can install on this host[/]")
+            return
+
         # Explain and satisfy every elevation reason once, before the concurrent installs start
         sudo_mgr = preflight(console, uninstalled, create_links=not no_links)
 
@@ -480,6 +492,8 @@ def update_command(
                 console.print(f"[yellow]{program} is not installed[/]")
                 console.print(f"[yellow]Use '{RUN} install {program}' to install it[/]")
                 raise typer.Exit(1)
+
+            exit_if_unavailable(console, prog)
 
             # Check if update is needed
             async def check_and_update() -> bool:
@@ -538,6 +552,13 @@ def update_command(
 
         if len(installed) == 0:
             console.print("[yellow]No programs installed[/]")
+            return
+
+        # Drop programs whose installer cannot run here before any version lookup, so the
+        # preview table, the privilege plan, and the metadata pairing all see the same list
+        installed = drop_unavailable(console, installed)
+        if len(installed) == 0:
+            console.print("[yellow]No remaining program can update on this host[/]")
             return
 
         # Check if any programs need updating

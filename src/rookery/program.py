@@ -71,6 +71,24 @@ class LinkCapabilities:
     desktop: bool = False
 
 
+@dataclass(frozen=True)
+class Availability:
+    """
+    Whether the current host can install a program.
+
+    Attributes
+    ----------
+    ok : bool
+        True when every tool the installer runs is present on this host.
+    reason : str
+        One sentence fragment explaining a False ``ok``, phrased to follow the program
+        name: "installs through apt, which is missing on this host".
+    """
+
+    ok: bool
+    reason: str = ""
+
+
 @dataclass
 class ProgramMetadata:
     """Program version and update status information."""
@@ -155,6 +173,21 @@ class Program(ABC):
             man_pages=len(self.man_page_files) > 0,
             desktop=self.desktop_entry_config is not None,
         )
+
+    def host_availability(self) -> Availability:
+        """
+        Check whether this host has the tools the installer will run.
+
+        Evaluated before any privilege prompt or download, so commands can drop a
+        program that cannot install here and explain why. Subclasses whose installer
+        shells out to a system tool override this to probe for it.
+
+        Returns
+        -------
+        Availability
+            ``ok`` is True when installation can proceed on this host.
+        """
+        return Availability(ok=True)
 
     def _ensure_install_dir(self) -> None:
         """
