@@ -188,12 +188,13 @@ def _explain(console: Console, plan: PrivilegePlan) -> None:
         )
 
     if len(plan.system_programs) > 0:
-        names = ", ".join(sorted(plan.system_programs))
         console.print(
-            f"  [cyan]System packages[/]: {names} install through the system package\n"
-            f"  manager, which needs sudo every time they are installed, updated, or\n"
-            f"  removed.\n"
+            "  [cyan]System packages[/]: installed through the system package manager, which\n"
+            "  needs sudo for every install, update, and removal:"
         )
+        for name in sorted(plan.system_programs):
+            console.print(f"    - [bold]{name}[/]")
+        console.print()
 
     if plan.creates_root:
         only_reason = len(plan.system_programs) == 0

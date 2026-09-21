@@ -606,11 +606,13 @@ def update_command(
         preview_table.add_column("Current", style="green")
         preview_table.add_column("Latest", style="yellow")
         preview_table.add_column("State", style="magenta")
+        preview_table.add_column("Sudo", style="red")
 
         for prog, meta in zip(installed, metadata_list, strict=True):
             if prog not in programs_to_update:
                 continue
 
+            sudo_cell = "yes" if prog.sudo_requirement is SudoRequirement.REQUIRED else ""
             if isinstance(meta, BaseException):
                 error_msg = str(meta)[:30]
                 preview_table.add_row(
@@ -618,6 +620,7 @@ def update_command(
                     prog.read_version_file(),
                     f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
                     "error",
+                    sudo_cell,
                 )
             elif meta.downgrade_available:
                 preview_table.add_row(
@@ -625,11 +628,16 @@ def update_command(
                     meta.current_version,
                     meta.latest_version or "Unknown",
                     "downgrade",
+                    sudo_cell,
                 )
             elif meta.update_available:
-                preview_table.add_row(prog.name, meta.current_version, meta.latest_version or "Unknown", "update")
+                preview_table.add_row(
+                    prog.name, meta.current_version, meta.latest_version or "Unknown", "update", sudo_cell
+                )
             else:
-                preview_table.add_row(prog.name, meta.current_version, meta.latest_version or "Unknown", "reinstall")
+                preview_table.add_row(
+                    prog.name, meta.current_version, meta.latest_version or "Unknown", "reinstall", sudo_cell
+                )
 
         console.print(preview_table)
 
