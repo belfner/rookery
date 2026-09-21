@@ -116,6 +116,7 @@ If rookery finds an install root that already exists but you cannot write into, 
 | just | GitHub binary | Command runner |
 | kpod | Shell script | `kubectl` wrappers that resolve a pod by name prefix |
 | mc | Standalone | MinIO Client for S3-compatible object storage |
+| meetrec | Shell script | Record meeting audio (system output plus microphone) to Opus via ffmpeg |
 | netron | GitHub .deb | Neural network model viewer |
 | nvim | GitHub binary | Hyperextensible Vim-based editor |
 | storageexplorer | GitHub binary | Azure Storage Explorer |
