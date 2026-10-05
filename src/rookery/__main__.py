@@ -28,6 +28,7 @@ from rookery.cli_helpers import (
     check_and_warn_path,
     drop_unavailable,
     exit_if_unavailable,
+    highlight_version_change,
     validate_sudo_if_needed,
     validate_sudo_or_exit,
 )
@@ -643,22 +644,19 @@ def update_command(
                     "error",
                     sudo_cell,
                 )
-            elif meta.downgrade_available:
-                preview_table.add_row(
-                    prog.name,
-                    meta.current_version,
-                    meta.latest_version or "Unknown",
-                    "downgrade",
-                    sudo_cell,
-                )
-            elif meta.update_available:
-                preview_table.add_row(
-                    prog.name, meta.current_version, meta.latest_version or "Unknown", "update", sudo_cell
-                )
             else:
-                preview_table.add_row(
-                    prog.name, meta.current_version, meta.latest_version or "Unknown", "reinstall", sudo_cell
+                if meta.downgrade_available:
+                    state = "downgrade"
+                elif meta.update_available:
+                    state = "update"
+                else:
+                    state = "reinstall"
+                latest_cell = (
+                    "Unknown"
+                    if meta.latest_version is None or len(meta.latest_version) == 0
+                    else highlight_version_change(meta.current_version, meta.latest_version)
                 )
+                preview_table.add_row(prog.name, meta.current_version, latest_cell, state, sudo_cell)
 
         console.print(preview_table)
 

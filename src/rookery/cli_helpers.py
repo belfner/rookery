@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.text import Text
 
 from rookery.config import config
 from rookery.path_utils import (
@@ -26,6 +28,45 @@ executable's path identifies the environment it lives in rather than the command
 that launched it, so deriving the spelling from `sys.argv[0]` misreports several
 supported layouts; the one form that always works is used instead.
 """
+
+_VERSION_TOKEN = re.compile(r"[0-9]+|[A-Za-z]+")
+
+# Styles for the changed tail of a version, keyed by the index of the first changed component.
+_CHANGE_STYLES = ("bold white on red", "bold black on cyan")
+_CHANGE_STYLE_DEFAULT = "bold black on green"
+
+
+def highlight_version_change(current: str | None, latest: str) -> Text:
+    """
+    Render a target version with its changed portion highlighted.
+
+    Versions are split into numeric and alphabetic components. Everything from the
+    first component that differs from ``current`` to the end of ``latest`` is styled
+    by how significant the change is, as bold text on a coloured background: red for
+    the first component (major), cyan for the second (minor), green for any later one
+    (patch and below).
+
+    Parameters
+    ----------
+    current : str | None
+        Installed version. None highlights the whole of ``latest``.
+    latest : str
+        Version being moved to.
+
+    Returns
+    -------
+    Text
+        ``latest`` with the unchanged prefix left unstyled and the changed tail styled.
+    """
+    current_tokens = [] if current is None else [m.group() for m in _VERSION_TOKEN.finditer(current)]
+    for index, match in enumerate(_VERSION_TOKEN.finditer(latest)):
+        if index < len(current_tokens) and current_tokens[index] == match.group():
+            continue
+        style = _CHANGE_STYLES[index] if index < len(_CHANGE_STYLES) else _CHANGE_STYLE_DEFAULT
+        text = Text(latest[: match.start()])
+        text.append(latest[match.start() :], style=style)
+        return text
+    return Text(latest)
 
 
 def validate_sudo_or_exit(console: Console, skip_hint: str | None = None) -> SudoManager:
