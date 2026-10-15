@@ -103,6 +103,7 @@ If rookery finds an install root that already exists but you cannot write into, 
 |---------|------|-------------|
 | bat | GitHub binary | `cat` clone with syntax highlighting |
 | blender | Standalone | 3D creation suite |
+| clip | Python script | Copy text, files, paths, and command output to the clipboard, with an OSC 52 fallback over SSH |
 | cuda-run | Shell script | Run a command in a throwaway uv environment with a PyPI CUDA toolkit |
 | drawio | GitHub AppImage | Diagram editor |
 | dust | GitHub binary | Intuitive `du` alternative |
