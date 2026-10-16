@@ -29,7 +29,6 @@ from rookery.cli_helpers import (
     drop_unavailable,
     exit_if_unavailable,
     highlight_version_change,
-    validate_sudo_if_needed,
     validate_sudo_or_exit,
 )
 from rookery.config import (
@@ -41,7 +40,12 @@ from rookery.link_status import (
     compute_link_status,
     compute_link_status_for_list,
 )
-from rookery.privilege import preflight
+from rookery.privilege import (
+    RootState,
+    inspect_install_root,
+    preflight,
+    require_writable_integration,
+)
 from rookery.program import (
     Program,
     ProgramMetadata,
@@ -84,7 +88,7 @@ console = Console()
 # Type aliases for common flags
 AllFlag = Annotated[
     bool,
-    typer.Option("--all", "-a", help="Update all programs regardless of update availability"),
+    typer.Option("--all", "-a", help="Apply the command to every applicable program"),
 ]
 
 ForceFlag = Annotated[
@@ -459,11 +463,14 @@ def install_command(
         # Explain and satisfy every elevation reason once, before the concurrent installs start
         sudo_mgr = preflight(console, uninstalled, create_links=not no_links)
 
-        asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr, create_links=not no_links))
+        failed = asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr, create_links=not no_links))
 
         # Warn about PATH for programs that don't require sudo
         if any(p.sudo_requirement == SudoRequirement.NOT_REQUIRED for p in uninstalled):
             check_and_warn_path(console)
+
+        if len(failed) > 0:
+            raise typer.Exit(1)
 
 
 @app.command(name="update")
@@ -496,33 +503,37 @@ def update_command(
 
             exit_if_unavailable(console, prog)
 
-            # Check if update is needed
-            async def check_and_update() -> bool:
-                meta = await prog.get_metadata()
+            # Check if update is needed; the metadata that decides it is handed to the update
+            async def check_for_update() -> ProgramMetadata | None:
+                try:
+                    meta = await prog.get_metadata()
+                except Exception as e:
+                    console.print(f"[red]Failed to check {prog.name} for updates: {e}[/]")
+                    raise typer.Exit(1) from None
                 if meta.pinned and not force:
                     pin_selector = meta.pin_version or meta.current_version
                     console.print(
                         f"[yellow]{prog.name} is pinned to {pin_selector}; latest is {meta.latest_version}. "
                         f"Use `{RUN} unpin {prog.name}` or `{RUN} install {prog.name}@VERSION --pin`.[/]"
                     )
-                    return False
+                    return None
                 if meta.pinned and force:
-                    return True
+                    return meta
                 if meta.downgrade_available:
                     if no_downgrade:
                         console.print(
                             f"[yellow]{prog.name} {meta.current_version} -> {meta.latest_version}"
                             " (downgrade skipped)[/]"
                         )
-                        return False
-                    return True
+                        return None
+                    return meta
                 if not force and not meta.update_available:
                     console.print(f"[dim]{prog.name} is already up to date ({meta.current_version})[/]")
-                    return False
-                return True
+                    return None
+                return meta
 
-            needs_update = asyncio.run(check_and_update())
-            if not needs_update:
+            checked = asyncio.run(check_for_update())
+            if checked is None:
                 return
 
             sudo_mgr = preflight(console, [prog], create_links=not no_links)
@@ -535,6 +546,7 @@ def update_command(
                     no_downgrade=no_downgrade,
                     sudo_mgr=sudo_mgr,
                     create_links=not no_links,
+                    meta=checked,
                 )
             )
             if not success and attempted:
@@ -563,7 +575,9 @@ def update_command(
             return
 
         # Check if any programs need updating
-        async def check_updates() -> tuple[list[Program], list[ProgramMetadata | BaseException]]:
+        async def check_updates() -> tuple[
+            list[tuple[Program, ProgramMetadata]], list[ProgramMetadata | BaseException]
+        ]:
             async def check_with_progress(
                 program: Program,
                 progress: Progress,
@@ -589,7 +603,7 @@ def update_command(
                 task = progress.add_task("Checking for updates", total=len(installed))
                 metadata_list = await asyncio.gather(*[check_with_progress(p, progress, task) for p in installed])
 
-            to_update: list[Program] = []
+            to_update: list[tuple[Program, ProgramMetadata]] = []
             for prog, meta in zip(installed, metadata_list, strict=True):
                 if isinstance(meta, BaseException):
                     console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
@@ -600,10 +614,12 @@ def update_command(
                 if meta.downgrade_available and no_downgrade:
                     continue
                 if force or meta.update_available or meta.downgrade_available:
-                    to_update.append(prog)
+                    to_update.append((prog, meta))
             return to_update, metadata_list
 
-        programs_to_update, metadata_list = asyncio.run(check_updates())
+        updates, metadata_list = asyncio.run(check_updates())
+        programs_to_update = [prog for prog, _ in updates]
+        check_failures = sum(1 for meta in metadata_list if isinstance(meta, BaseException))
 
         # Collect pinned programs that have an available update (skipped unless forced).
         pinned_skipped: list[tuple[str, str | None]] = []
@@ -619,6 +635,9 @@ def update_command(
                 pinned_skipped.sort(key=lambda item: item[0].casefold())
                 summary = ", ".join(f"{name} (pinned to {ver})" for name, ver in pinned_skipped)
                 console.print(f"[yellow]Pinned programs skipped: {summary}[/]")
+            if check_failures > 0:
+                console.print(f"[red]Could not check {check_failures} program(s) for updates[/]")
+                raise typer.Exit(1)
             console.print("[green]All programs are up to date[/]")
             return
 
@@ -630,33 +649,24 @@ def update_command(
         preview_table.add_column("State", style="magenta")
         preview_table.add_column("Sudo", style="red")
 
-        for prog, meta in zip(installed, metadata_list, strict=True):
-            if prog not in programs_to_update:
-                continue
-
+        for prog, meta in updates:
             sudo_cell = "yes" if prog.sudo_requirement is SudoRequirement.REQUIRED else ""
-            if isinstance(meta, BaseException):
-                error_msg = str(meta)[:30]
-                preview_table.add_row(
-                    prog.name,
-                    prog.read_version_file(),
-                    f"[red]{error_msg}...[/]" if len(str(meta)) > 30 else f"[red]{error_msg}[/]",
-                    "error",
-                    sudo_cell,
-                )
+            # A forced pinned program is reinstalled at its pin, never moved to latest.
+            target = (meta.pin_version or meta.current_version) if meta.pinned else meta.latest_version
+            if meta.pinned:
+                state = "reinstall (pinned)"
+            elif meta.downgrade_available:
+                state = "downgrade"
+            elif meta.update_available:
+                state = "update"
             else:
-                if meta.downgrade_available:
-                    state = "downgrade"
-                elif meta.update_available:
-                    state = "update"
-                else:
-                    state = "reinstall"
-                latest_cell = (
-                    "Unknown"
-                    if meta.latest_version is None or len(meta.latest_version) == 0
-                    else highlight_version_change(meta.current_version, meta.latest_version)
-                )
-                preview_table.add_row(prog.name, meta.current_version, latest_cell, state, sudo_cell)
+                state = "reinstall"
+            target_cell = (
+                "Unknown"
+                if target is None or len(target) == 0
+                else highlight_version_change(meta.current_version, target)
+            )
+            preview_table.add_row(prog.name, meta.current_version, target_cell, state, sudo_cell)
 
         console.print(preview_table)
 
@@ -684,9 +694,9 @@ def update_command(
 
         sudo_mgr = preflight(console, programs_to_update, create_links=not no_links)
 
-        asyncio.run(
+        failed = asyncio.run(
             update_programs(
-                programs_to_update,
+                updates,
                 console,
                 force=force,
                 no_downgrade=no_downgrade,
@@ -699,10 +709,18 @@ def update_command(
         if any(p.sudo_requirement == SudoRequirement.NOT_REQUIRED for p in programs_to_update):
             check_and_warn_path(console)
 
+        if check_failures > 0:
+            console.print(f"[red]Could not check {check_failures} program(s) for updates[/]")
+        if len(failed) > 0 or check_failures > 0:
+            raise typer.Exit(1)
 
-def _resolve_uninstall_sudo(console: Console, programs_to_check: list[Program], no_links: bool) -> SudoManager | None:
+
+def _check_uninstall_privileges(console: Console, programs_to_check: list[Program], no_links: bool) -> None:
     """
-    Determine if sudo is needed for uninstall and authenticate.
+    Reject unwritable integration directories and cache sudo for apt-based removals.
+
+    Link removal runs as the user. System-package programs are removed through
+    ``sudo apt``, so their credentials are validated once up front.
 
     Parameters
     ----------
@@ -713,30 +731,18 @@ def _resolve_uninstall_sudo(console: Console, programs_to_check: list[Program], 
     no_links : bool
         Whether link removal is skipped.
 
-    Returns
-    -------
-    SudoManager | None
-        Validated sudo manager if needed, None otherwise.
+    Raises
+    ------
+    typer.Exit
+        An integration directory holding links to remove is not writable, or sudo
+        could not be validated.
     """
-    requires_sudo_programs = any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_check)
-
-    if requires_sudo_programs:
-        return validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for uninstallation")
-
     if not no_links:
-        needs_sudo = False
-        if len(programs_to_check) > 0:
-            linker_check = SystemLinker()
-            for prog in programs_to_check:
-                existing = linker_check.get_existing_links(prog)
-                if len(existing["symlinks"]) > 0 or len(existing["desktop"]) > 0 or len(existing["man"]) > 0:
-                    needs_sudo = True
-                    break
+        rookery_linked = [p for p in programs_to_check if p.sudo_requirement is not SudoRequirement.REQUIRED]
+        require_writable_integration(console, rookery_linked)
 
-        if needs_sudo:
-            return validate_sudo_if_needed(console, "Hint: Use --no-links to skip system link removal")
-
-    return None
+    if any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_check):
+        validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for uninstallation")
 
 
 @app.command(name="uninstall")
@@ -765,8 +771,13 @@ def uninstall_command(
             console.print(f"[red]Error: {e}[/]")
             raise typer.Exit(1) from None
 
-        sudo_mgr = _resolve_uninstall_sudo(console, [prog], no_links)
-        uninstall_program(prog, console, sudo_mgr=sudo_mgr, skip_links=no_links)
+        if not prog.install_dir.exists():
+            console.print(f"[yellow]{program} is not installed[/]")
+            raise typer.Exit(1)
+
+        _check_uninstall_privileges(console, [prog], no_links)
+        if not uninstall_program(prog, console, skip_links=no_links):
+            raise typer.Exit(1)
     else:
         # Uninstall all programs (--all flag was used)
         programs = list_programs()
@@ -785,8 +796,10 @@ def uninstall_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        sudo_mgr = _resolve_uninstall_sudo(console, installed, no_links)
-        uninstall_programs(installed, console, sudo_mgr=sudo_mgr, skip_links=no_links)
+        _check_uninstall_privileges(console, installed, no_links)
+        failed = uninstall_programs(installed, console, skip_links=no_links)
+        if len(failed) > 0:
+            raise typer.Exit(1)
 
 
 @app.command(name="link")
@@ -799,7 +812,8 @@ def link_command(
 
     This command is optional - links are automatically created during install.
     Use this only if you previously installed with --no-links.
-    Requires either a program name or --all flag.
+    Requires either a program name or --all flag. Links are written as you, into
+    integration directories you can write.
     """
     # Validate arguments
     if (program is None) and not all_flag:
@@ -808,15 +822,16 @@ def link_command(
         console.print(f"[yellow]Or: {RUN} link --all[/]")
         raise typer.Exit(1)
 
-    # Validate sudo
-    sudo_mgr = validate_sudo_if_needed(console)
-
-    linker = SystemLinker(sudo_manager=sudo_mgr)
+    linker = SystemLinker()
 
     if program is not None:
         # Setup single program
         try:
             prog = get_program(program)
+            if not prog.version_file.exists():
+                console.print(f"[yellow]{program} is not installed[/]")
+                raise typer.Exit(1)
+            require_writable_integration(console, [prog])
             console.print(f"[cyan]Setting up {program}...[/]")
             results = linker.setup_program(prog)
 
@@ -857,6 +872,7 @@ def link_command(
             console.print("[yellow]No programs installed[/]")
             return
 
+        require_writable_integration(console, installed)
         console.print(f"[cyan]Setting up {len(installed)} program(s)...[/]")
         console.print()
 
@@ -924,8 +940,8 @@ def unlink_command(
     Manually remove system symlinks, desktop entries, and man page links.
 
     This command is optional - links are automatically removed during uninstall.
-    Use this only if you previously uninstalled with --no-links.
-    Requires either a program name or --all flag.
+    It works on installed programs; the program keeps its files and loses only its
+    links. Requires either a program name or --all flag.
     """
     # Validate arguments
     if (program is None) and not all_flag:
@@ -934,15 +950,16 @@ def unlink_command(
         console.print(f"[yellow]Or: {RUN} unlink --all[/]")
         raise typer.Exit(1)
 
-    # Validate sudo
-    sudo_mgr = validate_sudo_if_needed(console)
-
-    linker = SystemLinker(sudo_manager=sudo_mgr)
+    linker = SystemLinker()
 
     if program is not None:
         # Remove single program links
         try:
             prog = get_program(program)
+            if not prog.version_file.exists():
+                console.print(f"[yellow]{program} is not installed[/]")
+                raise typer.Exit(1)
+            require_writable_integration(console, [prog])
             console.print(f"[cyan]Removing links for {program}...[/]")
 
             results = linker.remove_program_links(prog)
@@ -982,6 +999,7 @@ def unlink_command(
             console.print("[yellow]No programs installed[/]")
             return
 
+        require_writable_integration(console, installed)
         console.print(f"[cyan]Removing links for {len(installed)} program(s)...[/]")
         console.print()
 
@@ -1112,8 +1130,10 @@ def info_command() -> None:
                 console.print("  Disk Usage: [dim]unavailable[/dim]")
 
         # Show if install directory is writable
-        writable = config.install_dir.exists() and os.access(config.install_dir, os.W_OK)
-        writable_status = "[green]Yes[/green]" if writable else "[red]No (requires sudo)[/red]"
+        writable = inspect_install_root(config.install_dir) is RootState.WRITABLE
+        writable_status = (
+            "[green]Yes[/green]" if writable else "[red]No (set ROOKERY_INSTALL_DIR to a directory you own)[/red]"
+        )
         console.print(f"  Install Directory Writable: {writable_status}")
     else:
         console.print("  Installed Programs: 0")

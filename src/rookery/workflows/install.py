@@ -17,6 +17,7 @@ from rich.progress import (
 from rookery.config import config
 from rookery.deb_program import DebProgram
 from rookery.install_resolution import install_resolution
+from rookery.operations import noninteractive_installs
 from rookery.program import Program
 from rookery.state import program_state_lock_async
 from rookery.sudo import SudoManager
@@ -131,7 +132,7 @@ async def install_programs(
     console: Console,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
-) -> None:
+) -> list[str]:
     """
     Install multiple programs.
 
@@ -145,6 +146,11 @@ async def install_programs(
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
+
+    Returns
+    -------
+    list[str]
+        Names of the programs whose install was attempted and failed.
     """
     names = ", ".join(sorted((p.name for p in programs), key=str.casefold))
     console.print(f"[cyan]Installing: {names}[/]")
@@ -153,15 +159,18 @@ async def install_programs(
     failed: list[str] = []
     semaphore = asyncio.Semaphore(config.max_parallel)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[cyan]{task.fields[current]}[/]"),
-        console=console,
-        transient=True,
-    ) as progress:
+    with (
+        noninteractive_installs(),
+        Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[cyan]{task.fields[current]}[/]"),
+            console=console,
+            transient=True,
+        ) as progress,
+    ):
         task = progress.add_task("Installing", total=len(programs), current="")
 
         async def install_one(prog: Program, progress: Progress, task: TaskID) -> None:
@@ -209,3 +218,5 @@ async def install_programs(
 
     if (len(installed) == 0) and (len(failed) == 0):
         console.print("[dim]No programs were installed[/]")
+
+    return failed

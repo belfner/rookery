@@ -10,10 +10,7 @@ from rich.console import Console
 from rich.text import Text
 
 from rookery.config import config
-from rookery.path_utils import (
-    check_path_in_user_path_env,
-    requires_sudo,
-)
+from rookery.path_utils import check_path_in_user_path_env
 from rookery.program import Program
 from rookery.sudo import SudoManager
 
@@ -97,43 +94,6 @@ def validate_sudo_or_exit(console: Console, skip_hint: str | None = None) -> Sud
             console.print(f"[yellow]{skip_hint}[/]")
         raise typer.Exit(1)
     return sudo_mgr
-
-
-def validate_sudo_if_needed(console: Console, skip_hint: str | None = None) -> SudoManager | None:
-    """
-    Validate sudo only if target paths require it.
-
-    Checks writability of configured bin_dir, desktop_dir, and man_dir.
-    Returns None if all paths are user-writable (no sudo needed).
-    Returns SudoManager if sudo is needed and validated.
-    Exits if sudo is needed but validation fails.
-
-    Parameters
-    ----------
-    console : Console
-        Rich console for output.
-    skip_hint : str | None
-        Optional message about how to skip sudo requirement.
-
-    Returns
-    -------
-    SudoManager | None
-        Validated sudo manager if needed, None if all paths are user-writable.
-
-    Raises
-    ------
-    typer.Exit
-        If sudo validation fails when needed.
-    """
-    # Check if any paths need sudo
-    paths_to_check = [config.bin_dir, config.desktop_dir, config.man_dir]
-
-    if not requires_sudo(paths_to_check):
-        # All paths are user-writable, no sudo needed
-        return None
-
-    # At least one path needs sudo
-    return validate_sudo_or_exit(console, skip_hint)
 
 
 def check_and_warn_path(console: Console) -> None:

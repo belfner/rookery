@@ -16,6 +16,7 @@ from rich.progress import (
 
 from rookery.cli_helpers import RUN
 from rookery.config import config
+from rookery.operations import noninteractive_installs
 from rookery.program import (
     Program,
     ProgramMetadata,
@@ -71,6 +72,7 @@ async def update_program(
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
     batch: bool = False,
+    meta: ProgramMetadata | None = None,
 ) -> tuple[bool, bool, str]:
     """
     Update a single program.
@@ -91,6 +93,9 @@ async def update_program(
         Whether to create system links. If False, skip link creation entirely.
     batch : bool
         When True, suppress per-program output (summary handles it).
+    meta : ProgramMetadata | None
+        Metadata the caller already fetched for this program, by default None,
+        which fetches it here. Reusing it saves a version lookup per program.
 
     Returns
     -------
@@ -100,7 +105,8 @@ async def update_program(
         version is the installed version.
     """
     try:
-        meta = await program.get_metadata()
+        if meta is None:
+            meta = await program.get_metadata()
 
         # Pin == hold: a pinned program is never moved by update. With --force it is
         # reinstalled at the pinned version (not latest, not a different version).
@@ -197,20 +203,20 @@ async def update_program(
 
 
 async def update_programs(
-    programs: list[Program],
+    updates: list[tuple[Program, ProgramMetadata]],
     console: Console,
     force: bool = False,
     no_downgrade: bool = False,
     sudo_mgr: SudoManager | None = None,
     create_links: bool = True,
-) -> None:
+) -> list[str]:
     """
-    Update multiple programs.
+    Update multiple programs whose metadata the caller has already checked.
 
     Parameters
     ----------
-    programs : list[Program]
-        List of installed programs to update.
+    updates : list[tuple[Program, ProgramMetadata]]
+        Programs selected for update, each paired with the metadata that selected it.
     console : Console
         Rich console for output.
     force : bool
@@ -221,75 +227,33 @@ async def update_programs(
         Sudo manager for link creation. May be None for user-local paths.
     create_links : bool
         Whether to create system links. If False, skip link creation entirely.
+
+    Returns
+    -------
+    list[str]
+        Names of the programs whose update was attempted and failed.
     """
-
-    # Get metadata and filter for updates
-    async def check_with_progress(
-        program: Program,
-        progress: Progress,
-        task: TaskID,
-    ) -> ProgramMetadata | BaseException:
-        result: ProgramMetadata | BaseException
-        try:
-            result = await program.get_metadata()
-        except Exception as e:
-            result = e
-        finally:
-            progress.advance(task)
-        return result
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Checking for updates", total=len(programs))
-        metadata_list = await asyncio.gather(*[check_with_progress(p, progress, task) for p in programs])
-
-    to_update = []
-    pinned_skipped: list[tuple[str, str | None]] = []
-    for prog, meta in zip(programs, metadata_list, strict=True):
-        if isinstance(meta, BaseException):
-            console.print(f"[yellow]Warning: Could not check {prog.name}: {meta}[/]")
-            continue
-        # Pin == hold: pinned programs are skipped unless forced (force reinstalls the pin).
-        if meta.pinned and not force:
-            if meta.update_available or meta.downgrade_available:
-                pinned_skipped.append((prog.name, meta.pin_version))
-            continue
-        if meta.downgrade_available and no_downgrade:
-            continue
-        if meta.update_available or meta.downgrade_available or force:
-            to_update.append(prog)
-
-    if len(pinned_skipped) > 0:
-        pinned_skipped.sort(key=lambda item: item[0].casefold())
-        summary = ", ".join(f"{name} (pinned to {version})" for name, version in pinned_skipped)
-        console.print(f"[yellow]Pinned programs skipped: {summary}[/]")
-
-    if len(to_update) == 0:
-        console.print("[green]All programs are up to date[/]")
-        return
+    programs = [prog for prog, _ in updates]
 
     upgraded: list[tuple[str, str]] = []
     failed: list[str] = []
     semaphore = asyncio.Semaphore(config.max_parallel)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("[cyan]{task.fields[current]}[/]"),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Updating", total=len(to_update), current="")
+    with (
+        noninteractive_installs(),
+        Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[cyan]{task.fields[current]}[/]"),
+            console=console,
+            transient=True,
+        ) as progress,
+    ):
+        task = progress.add_task("Updating", total=len(updates), current="")
 
-        async def update_one(prog: Program, progress: Progress, task: TaskID) -> None:
+        async def update_one(prog: Program, meta: ProgramMetadata, progress: Progress, task: TaskID) -> None:
             async with semaphore:
                 success, attempted, version = await update_program(
                     prog,
@@ -299,6 +263,7 @@ async def update_programs(
                     sudo_mgr=sudo_mgr,
                     create_links=create_links,
                     batch=True,
+                    meta=meta,
                 )
                 if success:
                     upgraded.append((prog.name, version))
@@ -307,7 +272,7 @@ async def update_programs(
                 progress.update(task, current=prog.name)
                 progress.advance(task)
 
-        await asyncio.gather(*[update_one(prog, progress, task) for prog in to_update])
+        await asyncio.gather(*[update_one(prog, meta, progress, task) for prog, meta in updates])
 
     # Update databases if any programs were updated
     if create_links and len(upgraded) > 0:
@@ -340,3 +305,5 @@ async def update_programs(
 
     if (len(upgraded) == 0) and (len(failed) == 0):
         console.print("[dim]No programs were updated[/]")
+
+    return failed

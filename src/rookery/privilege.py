@@ -31,6 +31,7 @@ from rookery.path_utils import is_path_writable
 from rookery.program import Program
 from rookery.sudo import SudoManager
 from rookery.sudo_requirement import SudoRequirement
+from rookery.system import SystemLinker
 
 
 class RootState(Enum):
@@ -299,6 +300,61 @@ def _create_root(sudo_mgr: SudoManager, root: Path) -> bool:
     return True
 
 
+def _report_protected_paths(console: Console, paths: list[Path]) -> None:
+    """
+    Explain that integration directories the user cannot write are a configuration error.
+
+    Parameters
+    ----------
+    console : Console
+        Rich console for output.
+    paths : list[Path]
+        Integration directories that are not writable by the current user.
+    """
+    listed = ", ".join(str(p) for p in paths)
+    console.print(
+        f"\n[red]Error: integration directories must be writable by you: {listed}[/]\n"
+        "[dim]Point the matching ROOKERY_BIN_DIR, ROOKERY_DESKTOP_DIR, or\n"
+        "ROOKERY_MAN_DIR at a directory you own, or pass --no-links to skip\n"
+        "system integration.[/]\n"
+    )
+
+
+def require_writable_integration(console: Console, programs: list[Program]) -> None:
+    """
+    Exit when linking or unlinking these programs would write a directory the user cannot.
+
+    Link management runs as the invoking user, so the check covers the integration
+    directories ``build_plan`` collects for these programs plus the directories holding
+    their existing links.
+
+    Parameters
+    ----------
+    console : Console
+        Rich console for output.
+    programs : list[Program]
+        Programs whose links the command will create or remove.
+
+    Raises
+    ------
+    typer.Exit
+        A needed integration directory is not writable by the current user.
+    """
+    protected = build_plan(programs, create_links=True).protected_paths
+    # An installed program's existing links can sit in directories the plan does not
+    # name, such as a man section holding a link from before links were recorded.
+    linker = SystemLinker()
+    for program in programs:
+        if program.sudo_requirement is SudoRequirement.REQUIRED or not program.version_file.exists():
+            continue
+        for path in linker.owned_links(program):
+            if path.parent not in protected and not is_path_writable(path.parent):
+                protected.append(path.parent)
+    if len(protected) > 0:
+        _report_protected_paths(console, protected)
+        raise typer.Exit(1)
+
+
 def preflight(console: Console, programs: list[Program], create_links: bool) -> SudoManager | None:
     """
     Explain and satisfy every elevation reason for a command, validating sudo once.
@@ -347,13 +403,7 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
         raise typer.Exit(1)
 
     if len(plan.protected_paths) > 0:
-        paths = ", ".join(str(p) for p in plan.protected_paths)
-        console.print(
-            f"\n[red]Error: integration directories must be writable by you: {paths}[/]\n"
-            "[dim]Point the matching ROOKERY_BIN_DIR, ROOKERY_DESKTOP_DIR, or\n"
-            "ROOKERY_MAN_DIR at a directory you own, or pass --no-links to skip\n"
-            "system integration.[/]\n"
-        )
+        _report_protected_paths(console, plan.protected_paths)
         raise typer.Exit(1)
 
     if plan.creates_root:

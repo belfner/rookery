@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from pathlib import Path
 
 from rich.console import Console
 
 from rookery.deb_program import DebProgram
 from rookery.program import Program
 from rookery.state import program_state_lock
-from rookery.sudo import SudoManager
 from rookery.system import SystemLinker
 
 
@@ -80,9 +80,8 @@ def uninstall_deb_program(program: Program, console: Console) -> None:
 def uninstall_program(
     program: Program,
     console: Console,
-    sudo_mgr: SudoManager | None = None,
     skip_links: bool = False,
-) -> None:
+) -> bool:
     """
     Uninstall a single program.
 
@@ -92,18 +91,28 @@ def uninstall_program(
         Program to uninstall.
     console : Console
         Rich console for output.
-    sudo_mgr : SudoManager | None
-        Sudo manager for link removal. If None, skip link removal.
     skip_links : bool
         Whether the user explicitly requested skipping link removal.
+
+    Returns
+    -------
+    bool
+        True when the program was removed, False when it was absent or removal failed.
     """
     if not program.install_dir.exists():
         console.print(f"[yellow]{program.name} is not installed[/]")
-        return
+        return False
 
     if isinstance(program, DebProgram):
-        uninstall_deb_program(program, console)
-        return
+        try:
+            uninstall_deb_program(program, console)
+        except RuntimeError as e:
+            console.print(f"[red]✗ Failed to uninstall {program.name}: {e}[/]")
+            return False
+        console.print(f"[green]✓ Uninstalled {program.name}[/]")
+        return True
+
+    left_in_place: list[Path] = []
 
     # Link removal and the deletion of the directory holding the state are one locked
     # scope, so a command mutating this program's state cannot be left writing into a
@@ -113,10 +122,14 @@ def uninstall_program(
         # may have removed the program while this call waited.
         if not program.install_dir.exists():
             console.print(f"[yellow]{program.name} is not installed[/]")
-            return
+            return False
 
-        if not skip_links:
-            linker = SystemLinker(sudo_manager=sudo_mgr)
+        if skip_links:
+            # Uninstall removes the records naming these links, so they are listed now
+            # for the user to remove by hand.
+            left_in_place = SystemLinker().owned_links(program)
+        else:
+            linker = SystemLinker()
             results = linker.remove_program_links(program)
 
             if results["symlinks"]:
@@ -130,17 +143,18 @@ def uninstall_program(
         shutil.rmtree(program.install_dir)
     console.print(f"[green]✓ Uninstalled {program.name}[/]")
 
-    # Warn if links were explicitly skipped by user
-    if skip_links:
-        console.print("[yellow]System links not removed (run without --no-links to remove)[/]")
+    if len(left_in_place) > 0:
+        console.print("[yellow]System links left in place (--no-links); remove them by hand:[/]")
+        for path in left_in_place:
+            console.print(f"  [yellow]{path}[/]")
+    return True
 
 
 def uninstall_programs(
     programs: list[Program],
     console: Console,
-    sudo_mgr: SudoManager | None = None,
     skip_links: bool = False,
-) -> None:
+) -> list[str]:
     """
     Uninstall multiple programs.
 
@@ -150,12 +164,16 @@ def uninstall_programs(
         List of programs to uninstall.
     console : Console
         Rich console for output.
-    sudo_mgr : SudoManager | None
-        Sudo manager for link removal. If None, skip link removal.
     skip_links : bool
         Whether the user explicitly requested skipping link removal.
+
+    Returns
+    -------
+    list[str]
+        Names of the programs whose removal failed.
     """
-    linker = SystemLinker(sudo_manager=sudo_mgr) if not skip_links else None
+    linker = SystemLinker() if not skip_links else None
+    failed: list[str] = []
     uninstalled_count = 0
     links_removed_count = 0
     system_managed_count = 0
@@ -167,7 +185,12 @@ def uninstall_programs(
             continue
 
         if isinstance(prog, DebProgram):
-            uninstall_deb_program(prog, console)
+            try:
+                uninstall_deb_program(prog, console)
+            except RuntimeError as e:
+                console.print(f"[red]✗ Failed to uninstall {prog.name}: {e}[/]")
+                failed.append(prog.name)
+                continue
             uninstalled_count += 1
             system_managed_count += 1
             continue
@@ -207,5 +230,8 @@ def uninstall_programs(
         console.print(f"[green]Removed links for {links_removed_count} program(s)[/]")
         if system_managed_count > 0:
             console.print(f"[green]{system_managed_count} program(s) managed by system package manager[/]")
-    elif skip_links:
-        console.print("[yellow]System links not removed (run without --no-links to remove)[/]")
+    else:
+        console.print("[yellow]System links left in place (--no-links); remove them by hand[/]")
+    if len(failed) > 0:
+        console.print(f"[red]Failed to uninstall {len(failed)} program(s): {', '.join(failed)}[/]")
+    return failed

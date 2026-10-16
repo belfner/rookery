@@ -44,23 +44,6 @@ def is_path_writable(path: Path) -> bool:
     return is_path_writable(parent)
 
 
-def requires_sudo(paths: list[Path]) -> bool:
-    """
-    Check if any of the given paths requires sudo access.
-
-    Parameters
-    ----------
-    paths : list[Path]
-        List of paths to check.
-
-    Returns
-    -------
-    bool
-        True if any path requires sudo (is not writable by current user).
-    """
-    return any(not is_path_writable(path) for path in paths)
-
-
 def check_path_in_user_path_env(bin_dir: Path) -> bool:
     """
     Check if a directory is in user's PATH environment variable.
