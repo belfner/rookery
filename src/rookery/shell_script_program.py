@@ -205,7 +205,7 @@ class ShellScriptProgram(Program):
         Everything a script program keeps in its install directory is generated, apart
         from the dot-prefixed `.version` and `.rookery-state.json` sentinels. Clearing
         before a write means an update to a payload that dropped or renamed a script,
-        man page, or symlink leaves the old entry behind on disk. The sweep also
+        man page, or symlink leaves only the current payload on disk. The sweep also
         reclaims the temporaries an interrupted atomic write leaves behind, which carry
         a dot prefix of their own.
         """

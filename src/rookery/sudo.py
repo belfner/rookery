@@ -27,21 +27,19 @@ class SudoManager:
         """
         try:
             # Validate and cache credentials
-            result = subprocess.run(
+            subprocess.run(
                 ["sudo", "-v"],
                 check=True,
                 capture_output=True,
                 timeout=30,
             )
-
-            if result.returncode == 0:
-                self._sudo_active = True
-                # Register cleanup handler
-                atexit.register(self.invalidate_cache)
-                return True
-            return False
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
             return False
+
+        self._sudo_active = True
+        # Register cleanup handler
+        atexit.register(self.invalidate_cache)
+        return True
 
     def invalidate_cache(self) -> None:
         """Invalidate sudo credential cache for security."""
@@ -75,7 +73,11 @@ class SudoManager:
         Raises
         ------
         RuntimeError
-            If sudo not active or command fails.
+            If sudo credentials have not been validated.
+        subprocess.CalledProcessError
+            If the command exits non-zero.
+        subprocess.TimeoutExpired
+            If the command runs longer than 30 seconds.
         """
         if not self._sudo_active:
             raise RuntimeError("Sudo credentials not cached. Call validate_and_cache() first.")

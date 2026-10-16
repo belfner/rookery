@@ -23,24 +23,16 @@ class DebProgram(GitHubProgram):
     binary_files, man_page_files, or desktop_entry_config - dpkg handles all
     system integration.
 
-    Subclasses MUST override:
+    Subclasses MUST set or implement:
     - deb_package_name: str - The package name as it appears in dpkg
+    - get_install_operations() - download the release .deb (typically through
+      get_github_asset_url with an asset selector) and install it with
+      InstallDebSystemWide, as netron.py does
 
     The class handles:
     - Version tracking in /opt/rookery-programs/{program_name}/.version
     - Package name mapping for uninstallation
-    - GitHub release asset selection
-
-    Examples
-    --------
-    Standard .deb program:
-        class MyProgram(DebProgram):
-            program_name = "myprogram"
-            github_repo = "owner/repo"
-            deb_package_name = "myprogram"  # Package name in dpkg
-
-            def _select_asset(self, assets):
-                return next((a for a in assets if a.name.endswith(".deb")), None)
+    - Host availability (apt and dpkg on PATH) and the pin advisory
     """
 
     sudo_requirement: SudoRequirement = SudoRequirement.REQUIRED  # Override GitHubProgram
