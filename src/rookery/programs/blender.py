@@ -44,10 +44,6 @@ class BlenderProgram(Program):
             desktop=True,
         )
 
-    def __init__(self) -> None:
-        """Initialize Blender program."""
-        super().__init__()
-
     async def get_latest_version(self) -> str:
         """
         Fetch latest version from download.blender.org.
@@ -147,7 +143,7 @@ class BlenderProgram(Program):
             "Exec": f"{exec_path} %f",
             "Terminal": "false",
             "Type": "Application",
-            "Icon": "blender",
+            "Icon": str(icon_path),
             "Categories": "Graphics;3DGraphics;",
             "MimeType": "application/x-blender;",
         }

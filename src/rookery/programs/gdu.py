@@ -66,10 +66,12 @@ class GduProgram(GitHubProgram):
         tag = self.upstream_tag_for(version)
         man_page_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/gdu.1.tgz"
 
+        # Both downloads precede the first extraction, so a failed download leaves the
+        # installed files untouched.
         return [
             DownloadArchive("gdu", asset_url),
+            DownloadArchive("gdu-man", man_page_url),
             ExtractFiles("gdu", {"gdu_linux_amd64": "gdu"}),
             MakeExecutable("gdu"),
-            DownloadArchive("gdu-man", man_page_url),
             ExtractFiles("gdu-man", {"gdu.1": "gdu.1"}),
         ]

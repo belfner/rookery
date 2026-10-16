@@ -70,12 +70,12 @@ class DustProgram(GitHubProgram):
         tag = self.upstream_tag_for(version)
         source_url = f"https://github.com/bootandy/dust/archive/refs/tags/{tag}.tar.gz"
 
+        # Both downloads precede the first extraction, so a failed download leaves the
+        # installed files untouched.
         return [
-            # Download and extract binary
             DownloadArchive("binary", binary_url),
+            DownloadArchive("source", source_url),
             ExtractFiles("binary", {"*/dust": "dust"}),
             MakeExecutable("dust"),
-            # Download and extract man page from source
-            DownloadArchive("source", source_url),
             ExtractFiles("source", {"*/man-page/dust.1": "dust.1"}),
         ]

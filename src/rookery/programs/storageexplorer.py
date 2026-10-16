@@ -5,30 +5,26 @@ from __future__ import annotations
 from pathlib import Path
 
 from rookery.fetching import Asset
-from rookery.github_utils import (
-    get_github_asset_url,
-    get_github_latest_version,
-)
+from rookery.github_program import GitHubProgram
+from rookery.github_utils import get_github_asset_url
 from rookery.operations import (
     DownloadArchive,
     ExtractArchive,
     InstallOperation,
 )
-from rookery.program import (
-    LinkCapabilities,
-    Program,
-)
+from rookery.program import LinkCapabilities
 from rookery.sudo_requirement import SudoRequirement
-from rookery.version_sources import GitHubReleaseSource
 
 
-class StorageExplorerProgram(Program):
+class StorageExplorerProgram(GitHubProgram):
     """Azure Storage Explorer - Manage Azure Storage resources from desktop."""
 
     # Declarative file locations
     program_name = "storageexplorer"
     sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("StorageExplorer/StorageExplorer")]
+
+    github_repo = "microsoft/AzureStorageExplorer"
 
     @property
     def link_capabilities(self) -> LinkCapabilities:
@@ -46,23 +42,6 @@ class StorageExplorerProgram(Program):
             man_pages=base.man_pages,
             desktop=True,
         )
-
-    def __init__(self) -> None:
-        """Initialize Azure Storage Explorer program."""
-        super().__init__()
-        self.github_repo = "microsoft/AzureStorageExplorer"
-        self.version_source = GitHubReleaseSource(github_repo=self.github_repo)
-
-    async def get_latest_version(self) -> str:
-        """
-        Get latest version from GitHub releases.
-
-        Returns
-        -------
-        str
-            Latest version string.
-        """
-        return await get_github_latest_version(self.github_repo)
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
@@ -82,17 +61,6 @@ class StorageExplorerProgram(Program):
             if "StorageExplorer-linux-x64" in asset.name and asset.name.endswith(".tar.gz"):
                 return asset
         return None
-
-    async def initialize(self, version: str) -> None:
-        """
-        Initialize installation directory.
-
-        Parameters
-        ----------
-        version : str
-            Version being installed.
-        """
-        self.install_dir.mkdir(parents=True, exist_ok=True)
 
     async def get_install_operations(self, version: str) -> list[InstallOperation]:
         """

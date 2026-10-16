@@ -69,11 +69,13 @@ class EzaProgram(GitHubProgram):
         tag = self.upstream_tag_for(version)
         man_page_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/man-{version}.tar.gz"
 
+        # Both downloads precede the first extraction, so a failed download leaves the
+        # installed files untouched.
         return [
             DownloadArchive("eza", asset_url),
+            DownloadArchive("eza-man", man_page_url),
             ExtractFiles("eza", {"eza": "eza"}),
             MakeExecutable("eza"),
-            DownloadArchive("eza-man", man_page_url),
             ExtractFiles(
                 "eza-man",
                 {
