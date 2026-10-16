@@ -5,15 +5,16 @@ from __future__ import annotations
 from rookery.shell_script_program import ShellScriptProgram
 
 
-TARSSH_SCRIPT = r"""#!/bin/sh
+TARSSH_SCRIPT = r"""#!/usr/bin/env bash
 # tarssh - stream a directory/file over SSH via tar pipe (no temp files)
+
+set -o pipefail
 
 # Defaults
 compressor="none"
 ssh_port=""
 bwlimit=""
 dry_run=false
-ssh_extra_opts=""
 
 # --- Help -----------------------------------------------------------------
 
@@ -32,7 +33,7 @@ OPTIONS:
                     lz4   - very fast, low CPU, good for large uncompressed data
                     zstd  - best ratio/speed tradeoff
   -p port         SSH port (default: 22)
-  -l limit        Bandwidth limit in kbps, e.g. -l 50000 for ~50 MB/s
+  -l limit        Bandwidth limit in KiB/s, e.g. -l 50000 for ~50 MB/s
   -n              Dry run -- print the command that would be executed, then exit
   -h, --help      Show this help message and exit
 
@@ -53,7 +54,7 @@ EXAMPLES:
   $(basename "$0") -c gz ./mydir myserver:/backups/
 
 NOTES:
-  - Requires: ssh, tar on both ends
+  - Requires: bash, ssh, tar locally; tar on the remote
   - Optional: pv (progress), pigz (gz), lz4, zstd (must be on remote too if used)
   - lz4/zstd require the compressor installed on BOTH local and remote machines
   - 'none' compression is often fastest on high-bandwidth LAN or pre-compressed data
@@ -158,10 +159,6 @@ esac
 
 # --- Build command pipeline ------------------------------------------------
 
-# SSH options
-ssh_opts="-o Compression=no"  # We handle compression manually
-[ -n "$ssh_port" ] && ssh_opts="$ssh_opts -p $ssh_port"
-
 # Source size for pv
 original_size=$(du -sb "$source_path" 2>/dev/null | awk '{print $1}')
 
@@ -169,63 +166,83 @@ original_size=$(du -sb "$source_path" 2>/dev/null | awk '{print $1}')
 parent_dir=$(dirname "$source_path")
 target_name=$(basename "$source_path")
 
-# Local tar command
-tar_cmd="(cd '$parent_dir' && tar cf - '$target_name')"
-
-# Optional pv
-if [ "$use_pv" = true ] && [ -n "$original_size" ]; then
-    pv_cmd="pv -s $original_size"
-elif [ "$use_pv" = true ]; then
-    pv_cmd="pv"
-else
-    pv_cmd=""
-fi
-
-# Bandwidth limiting via pv
-if [ -n "$bwlimit" ] && [ "$use_pv" = true ]; then
-    pv_cmd="$pv_cmd -L ${bwlimit}k"
-elif [ -n "$bwlimit" ] && [ "$use_pv" = false ]; then
+# Optional pv, which also applies the bandwidth limit
+pv_args=()
+if [ "$use_pv" = true ]; then
+    pv_args=(pv)
+    [ -n "$original_size" ] && pv_args+=(-s "$original_size")
+    [ -n "$bwlimit" ] && pv_args+=(-L "${bwlimit}k")
+elif [ -n "$bwlimit" ]; then
     echo "Warning: Bandwidth limiting (-l) requires 'pv'. Ignoring -l flag."
 fi
 
 # Compression: local compress | remote decompress
+compress_args=()
 case "$compressor" in
     none)
-        local_compress=""
         remote_decompress="tar xf -"
         ;;
     gz)
-        local_compress="| pigz"
+        compress_args=(pigz)
         remote_decompress="tar xzf -"
         ;;
     gz_builtin)
-        local_compress="| gzip"
+        compress_args=(gzip)
         remote_decompress="tar xzf -"
         compressor="gz (gzip fallback)"
         ;;
     lz4)
-        local_compress="| lz4"
+        compress_args=(lz4)
         remote_decompress="lz4 -d | tar xf -"
         ;;
     zstd)
-        local_compress="| zstd"
+        compress_args=(zstd)
         remote_decompress="zstd -d | tar xf -"
         ;;
 esac
 
-# Build the full pipeline
-if [ -n "$pv_cmd" ] && [ -n "$local_compress" ]; then
-    pipeline="${tar_cmd} | ${pv_cmd} ${local_compress}"
-elif [ -n "$pv_cmd" ]; then
-    pipeline="${tar_cmd} | ${pv_cmd}"
-elif [ -n "$local_compress" ]; then
-    pipeline="${tar_cmd} ${local_compress}"
-else
-    pipeline="${tar_cmd}"
-fi
+# The remote command starts in the remote home, so a leading ~ maps to a relative path
+case "$remote_dir" in
+    "~") remote_dir="." ;;
+    "~/"*) remote_dir="${remote_dir#"~/"}"; [ -n "$remote_dir" ] || remote_dir="." ;;
+esac
 
-remote_cmd="mkdir -p '${remote_dir}' && cd '${remote_dir}' && ${remote_decompress}"
-full_cmd="${pipeline} | ssh ${ssh_opts} ${remote_host} \"${remote_cmd}\""
+# The remote shell parses the command once more, so the path travels single-quoted,
+# which every POSIX shell reads literally; an embedded ' becomes '\''
+sq="'"
+remote_dir_quoted="'${remote_dir//$sq/$sq\\$sq$sq}'"
+remote_cmd="mkdir -p -- ${remote_dir_quoted} && cd -- ${remote_dir_quoted} && ${remote_decompress}"
+
+ssh_args=(ssh -o Compression=no)  # We handle compression manually
+[ -n "$ssh_port" ] && ssh_args+=(-p "$ssh_port")
+ssh_args+=("$remote_host" "$remote_cmd")
+
+local_tar() {
+    (cd -- "$parent_dir" && tar cf - -- "$target_name")
+}
+
+# Runs the stages as one pipeline; with pipefail its status is the last failing stage
+run_transfer() {
+    if [ "${#pv_args[@]}" -gt 0 ] && [ "${#compress_args[@]}" -gt 0 ]; then
+        local_tar | "${pv_args[@]}" | "${compress_args[@]}" | "${ssh_args[@]}"
+    elif [ "${#pv_args[@]}" -gt 0 ]; then
+        local_tar | "${pv_args[@]}" | "${ssh_args[@]}"
+    elif [ "${#compress_args[@]}" -gt 0 ]; then
+        local_tar | "${compress_args[@]}" | "${ssh_args[@]}"
+    else
+        local_tar | "${ssh_args[@]}"
+    fi
+}
+
+# Shell-quoted rendering of the pipeline, for the dry run
+describe_transfer() {
+    printf '(cd %q && tar cf - -- %q)' "$parent_dir" "$target_name"
+    [ "${#pv_args[@]}" -gt 0 ] && printf ' | %s' "${pv_args[*]}"
+    [ "${#compress_args[@]}" -gt 0 ] && printf ' | %s' "${compress_args[*]}"
+    printf ' |'
+    printf ' %q' "${ssh_args[@]}"
+    printf '\n'
+}
 
 # --- Dry run ---------------------------------------------------------------
 
@@ -236,10 +253,10 @@ if [ "$dry_run" = true ]; then
     echo "Remote dir   : $remote_dir"
     echo "Compressor   : $compressor"
     [ -n "$ssh_port" ] && echo "SSH port     : $ssh_port"
-    [ -n "$bwlimit" ]  && echo "BW limit     : ${bwlimit} kbps"
+    [ -n "$bwlimit" ]  && echo "BW limit     : ${bwlimit} KiB/s"
     echo ""
     echo "Command that would run:"
-    echo "  $full_cmd"
+    echo "  $(describe_transfer)"
     exit 0
 fi
 
@@ -250,12 +267,12 @@ echo "Source       : $source_path  ($(du -sh "$source_path" 2>/dev/null | cut -f
 echo "Destination  : ${remote_host}:${remote_dir}"
 echo "Compressor   : $compressor"
 [ -n "$ssh_port" ] && echo "SSH port     : $ssh_port"
-[ -n "$bwlimit" ] && [ "$use_pv" = true ] && echo "BW limit     : ${bwlimit} kbps"
+[ -n "$bwlimit" ] && [ "$use_pv" = true ] && echo "BW limit     : ${bwlimit} KiB/s"
 echo ""
 
 start_time=$(date +%s)
 
-eval "$full_cmd"
+run_transfer
 exit_code=$?
 
 end_time=$(date +%s)
@@ -279,7 +296,7 @@ class TarsshProgram(ShellScriptProgram):
     """Stream a directory/file over SSH via tar pipe."""
 
     program_name = "tarssh"
-    version = "1.0.0"
+    version = "1.0.1"
     scripts = {
         "tarssh": TARSSH_SCRIPT,
     }

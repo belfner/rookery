@@ -18,7 +18,7 @@ KPOD_SCRIPT = r"""#!/usr/bin/env bash
 
 set -uo pipefail
 
-KPOD_VERSION="1.0.0"
+KPOD_VERSION="1.0.1"
 
 __kpod_show_cmd() {
   {
@@ -225,6 +225,10 @@ Examples:
   if [[ "${1:-}" == "--" ]]; then
     shift
     user_cmd=("$@")
+  elif [[ $# -gt 0 ]]; then
+    echo "kexec: unexpected argument '$1' after POD_PREFIX; options go before it and a command after --" >&2
+    echo "$usage" >&2
+    return 1
   fi
 
   local resolved ns pod
@@ -317,6 +321,12 @@ Examples:
     return 1
   fi
 
+  if [[ $# -gt 1 ]]; then
+    echo "klogs: unexpected argument '$2' after POD_PREFIX; options go before it" >&2
+    echo "$usage" >&2
+    return 1
+  fi
+
   local resolved ns pod
   resolved=$(__kpod_resolve "$query") || return 1
   ns="${resolved%%$'\t'*}"
@@ -353,6 +363,12 @@ Examples:
   local query="${1:-}"
 
   if [[ -z "$query" ]]; then
+    echo "$usage" >&2
+    return 1
+  fi
+
+  if [[ $# -gt 1 ]]; then
+    echo "kdesc: unexpected argument '$2' after POD_PREFIX; options go before it" >&2
     echo "$usage" >&2
     return 1
   fi
@@ -410,6 +426,12 @@ Examples:
   local query="${1:-}"
 
   if [[ -z "$query" ]]; then
+    echo "$usage" >&2
+    return 1
+  fi
+
+  if [[ $# -gt 1 ]]; then
+    echo "kdel: unexpected argument '$2' after POD_PREFIX; options go before it" >&2
     echo "$usage" >&2
     return 1
   fi
@@ -553,6 +575,12 @@ Examples:
     return 1
   fi
 
+  if [[ $# -gt 2 ]]; then
+    echo "kcp: unexpected argument '$3' after SRC DEST" >&2
+    echo "$usage" >&2
+    return 1
+  fi
+
   if [[ "$src" != *:* && "$dest" != *:* ]]; then
     echo "Error: At least one argument must be in pod:path format" >&2
     echo "$usage" >&2
@@ -662,7 +690,7 @@ class KpodProgram(ShellScriptProgram):
     """kubectl wrappers that resolve a pod by name prefix."""
 
     program_name = "kpod"
-    version = "1.0.0"
+    version = "1.0.1"
     scripts = {"kpod": KPOD_SCRIPT}
     payload_extras = {"subcommand_links": " ".join(_SUBCOMMAND_LINKS)}
 

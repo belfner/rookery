@@ -725,13 +725,25 @@ def compress(input_path: Path, output_path: Path, level: int | None,
     args = backend.build_args(level, threads)
     total_bytes = compute_total_bytes(input_path) if show_progress else 0
 
+    # An archive written inside the directory being archived (``ftar .``) would
+    # otherwise appear in its own stream, so its member path is excluded exactly.
+    tar_args = ["tar", "cf", "-"]
+    if input_path.is_dir() and not input_path.is_symlink():
+        try:
+            inner = output_path.resolve().relative_to(input_path.resolve())
+        except ValueError:
+            inner = None
+        if inner is not None:
+            tar_args += ["--anchored", "--no-wildcards",
+                         f"--exclude={target_name}/{inner.as_posix()}"]
+    tar_args += ["--", target_name]
+
     out_file = open(output_path, "wb")
     start = time.monotonic()
     tar = accel = None
     try:
         if show_progress:
-            tar = subprocess.Popen(["tar", "cf", "-", "--", target_name],
-                                   cwd=parent_dir, stdout=subprocess.PIPE)
+            tar = subprocess.Popen(tar_args, cwd=parent_dir, stdout=subprocess.PIPE)
             accel = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=out_file)
             assert tar.stdout is not None and accel.stdin is not None
             src_fd = tar.stdout.fileno()
@@ -751,8 +763,7 @@ def compress(input_path: Path, output_path: Path, level: int | None,
             accel_rc = accel.wait()
         else:
             # Direct kernel pipe: Python is not in the data path.
-            tar = subprocess.Popen(["tar", "cf", "-", "--", target_name],
-                                   cwd=parent_dir, stdout=subprocess.PIPE)
+            tar = subprocess.Popen(tar_args, cwd=parent_dir, stdout=subprocess.PIPE)
             assert tar.stdout is not None
             accel = subprocess.Popen(args, stdin=tar.stdout, stdout=out_file)
             tar.stdout.close()  # accel now owns the read end
@@ -2153,7 +2164,7 @@ class FasttarutilsProgram(ShellScriptProgram):
     """Fast multi-format tar compression (ftar) and extraction (funtar) utilities."""
 
     program_name = "fasttarutils"
-    version = "1.0.0"
+    version = "1.0.1"
     scripts = {
         "ftar": FTAR_SCRIPT,
         "funtar": FUNTAR_SCRIPT,

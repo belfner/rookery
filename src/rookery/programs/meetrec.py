@@ -403,11 +403,13 @@ def start() -> None:
     deadline = time.monotonic() + 3
     while time.monotonic() < deadline:
         if proc.poll() is not None:
+            print(f"Recording failed to start; see {LOGFILE}", file=sys.stderr)
             notify("Recording failed to start", f"see {LOGFILE}", "critical")
             sys.exit(1)
         if running_pid() == proc.pid:
             break
         time.sleep(0.05)
+    print(f"Recording started: {out}")
     notify("Recording started", str(out))
 
 
@@ -473,7 +475,7 @@ class MeetrecProgram(ShellScriptProgram):
     """Record the default PulseAudio monitor and microphone as separate tracks plus a mix, stopping when idle."""
 
     program_name = "meetrec"
-    version = "1.2.0"
+    version = "1.2.1"
     scripts = {
         "meetrec": MEETREC_SCRIPT,
     }

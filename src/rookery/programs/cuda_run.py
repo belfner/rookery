@@ -81,7 +81,7 @@ Examples:
   $PROG -k 13                       # interactive shell, keep the env
 
 Note: CUDA 12 wheels ship ptxas but not nvcc, so only 13.x and newer can
-compile. This script fails early and says so if nvcc is missing.
+compile. This script warns when the selected toolkit has no nvcc.
 EOF
 }
 
@@ -394,7 +394,7 @@ class CudaRunProgram(ShellScriptProgram):
     """Run a command inside a throwaway uv environment holding an NVIDIA CUDA toolkit."""
 
     program_name = "cuda-run"
-    version = "1.1.1"
+    version = "1.1.2"
     scripts = {
         "cuda-run": CUDA_RUN_SCRIPT,
     }
