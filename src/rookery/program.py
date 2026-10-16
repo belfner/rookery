@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import tempfile
 from abc import (
     ABC,
     abstractmethod,
@@ -107,7 +108,7 @@ class Program(ABC):
     """
     Abstract base class for managed programs.
 
-    Each program implements its own complete install/uninstall procedure.
+    Each program supplies its own install procedure; uninstall removes its install directory.
     Shared utilities (GitHubFetcher, Installer) are available but optional.
 
     Declarative Attributes
@@ -311,7 +312,11 @@ class Program(ABC):
             # Phase 2: Execute operations
             operations = await self.get_install_operations(version)
             if len(operations) > 0:
-                installer = Installer()
+                # Each install downloads into its own private directory, so concurrent
+                # installs and other users on the host never share download paths.
+                config.temp_dir.mkdir(parents=True, exist_ok=True)
+                download_dir = Path(tempfile.mkdtemp(prefix=f"rookery-{self.name}-", dir=config.temp_dir))
+                installer = Installer(download_dir=download_dir)
                 context = InstallContext(
                     install_dir=self.install_dir,
                     installer=installer,
@@ -321,10 +326,7 @@ class Program(ABC):
                     for operation in operations:
                         await operation.execute(context)
                 finally:
-                    # Cleanup temp files
-                    for temp_file in context.temp_files:
-                        if temp_file.exists():
-                            temp_file.unlink()
+                    shutil.rmtree(download_dir, ignore_errors=True)
 
             # Phase 3: Create generated files
             await self.create_generated_files(version)
@@ -340,15 +342,6 @@ class Program(ABC):
             if self.install_dir.exists() and not self.version_file.exists():
                 shutil.rmtree(self.install_dir)
             raise
-
-    async def uninstall(self) -> None:
-        """
-        Uninstall program by removing installation directory.
-
-        Subclasses can override for custom uninstall logic.
-        """
-        if self.install_dir.exists():
-            shutil.rmtree(self.install_dir)
 
     def get_binary_paths(self) -> list[Path]:
         """
@@ -441,7 +434,7 @@ class Program(ABC):
                 return LinkStatus.NOT_INSTALLED
 
             try:
-                has_binaries = len(self.get_binary_paths()) > 0
+                binary_count = len(self.get_binary_paths())
             except FileNotFoundError:
                 return LinkStatus.NOT_INSTALLED
 
@@ -451,38 +444,18 @@ class Program(ABC):
                 has_desktop = False
 
             try:
-                has_man_pages = len(self.get_man_pages()) > 0
+                man_count = len(self.get_man_pages())
             except FileNotFoundError:
-                has_man_pages = False
+                man_count = 0
 
-            if not has_binaries and not has_desktop and not has_man_pages:
+            if binary_count == 0 and not has_desktop and man_count == 0:
                 return LinkStatus.NOT_INSTALLED
 
-            linker = SystemLinker()
-            existing = linker.get_existing_links(self)
-
-            expected_count = 0
-            actual_count = 0
-
-            if has_binaries:
-                try:
-                    binary_count = len(self.get_binary_paths())
-                    expected_count += binary_count
-                    actual_count += len(existing["symlinks"])
-                except FileNotFoundError:
-                    pass
-
+            existing = SystemLinker().get_existing_links(self)
+            expected_count = binary_count + (1 if has_desktop else 0) + man_count
+            actual_count = len(existing["symlinks"]) + len(existing["man"])
             if has_desktop:
-                expected_count += 1
                 actual_count += len(existing["desktop"])
-
-            if has_man_pages:
-                try:
-                    man_count = len(self.get_man_pages())
-                    expected_count += man_count
-                    actual_count += len(existing["man"])
-                except FileNotFoundError:
-                    pass
 
             if actual_count == 0:
                 return LinkStatus.UNLINKED

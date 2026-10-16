@@ -18,6 +18,7 @@ import secrets
 import shutil
 from pathlib import Path
 
+
 # Name a temporary carries while a write is in flight: the destination's own name,
 # dot-prefixed, with a random tag. Matching it lets a caller sweeping a directory tell
 # a leftover from an interrupted write apart from a file the program owns.
@@ -163,13 +164,13 @@ def atomic_replace_path(source: str | Path, destination: str | Path, create_pare
     """
     Move a prepared file or directory onto a destination, replacing what is there.
 
-    A destination that is absent, and any file destination, is taken in a single
-    rename. Replacing a populated directory takes two, because the rename interface
-    refuses to overwrite one: the existing tree is moved aside under a temporary name,
-    the prepared tree takes its place, and the displaced tree is discarded afterwards.
-    The destination is absent for the span of those two adjacent renames, which is the
-    narrowest window POSIX offers for a tree. Failing to install the prepared tree puts
-    the displaced one back.
+    A destination that is absent, and a file or symlink replaced by a file or symlink,
+    is taken in a single rename. A directory on either side takes two, because the
+    rename interface refuses that pairing: the existing entry is moved aside under a
+    temporary name, the prepared one takes its place, and the displaced entry is
+    discarded afterwards. The destination is absent for the span of those two adjacent
+    renames, which is the narrowest window POSIX offers for a tree. Failing to install
+    the prepared entry puts the displaced one back.
 
     The source must sit on the same filesystem as the destination, which staging it
     beside the destination guarantees.
@@ -193,8 +194,11 @@ def atomic_replace_path(source: str | Path, destination: str | Path, create_pare
     if create_parents:
         final.parent.mkdir(parents=True, exist_ok=True)
 
+    # rename replaces a file or symlink in one step, and refuses only when a directory
+    # is on either side of an occupied destination.
     occupied = final.is_symlink() or final.exists()
-    if not occupied:
+    involves_directory = (final.is_dir() and not final.is_symlink()) or (origin.is_dir() and not origin.is_symlink())
+    if not occupied or not involves_directory:
         origin.replace(final)
         _sync_directory(final.parent)
         return final

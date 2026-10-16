@@ -3,18 +3,10 @@
 from __future__ import annotations
 
 import os
-from contextlib import suppress
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import niquests
-from rich.progress import (
-    Progress,
-    TaskID,
-)
-
-from rookery.file_io import temp_name_for
 
 
 @dataclass
@@ -141,66 +133,6 @@ class GitHubRateLimitError(Exception):
         super().__init__(message)
 
 
-async def download_file(
-    url: str,
-    dest: Path,
-    progress: Progress,
-    task_id: TaskID,
-    client: niquests.AsyncSession | None = None,
-) -> None:
-    """
-    Download file from URL with progress tracking.
-
-    Parameters
-    ----------
-    url : str
-        URL to download from.
-    dest : Path
-        Destination file path.
-    progress : Progress
-        Rich progress bar instance.
-    task_id : TaskID
-        Task ID for progress updates.
-    client : niquests.AsyncSession | None
-        Optional existing client, creates new one if None.
-    """
-    should_close = client is None
-    if client is None:
-        client = niquests.AsyncSession(timeout=300.0)
-
-    response = None
-    try:
-        response = await client.get(url, stream=True)
-        response.raise_for_status()
-        total = int(response.headers.get("content-length", 0))
-        progress.update(task_id, total=total)
-
-        # A streamed body is written through a temporary beside the destination and
-        # renamed onto it, so an interrupted download leaves no partial file where the
-        # installer expects a complete one.
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        partial = temp_name_for(dest)
-        try:
-            with partial.open("wb") as f:
-                downloaded = 0
-                async for chunk in await response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    progress.update(task_id, completed=downloaded)
-                f.flush()
-                os.fsync(f.fileno())
-            partial.replace(dest)
-        except BaseException:
-            with suppress(OSError):
-                partial.unlink()
-            raise
-    finally:
-        if response is not None:
-            await response.close()
-        if should_close:
-            await client.close()
-
-
 class GitHubFetcher:
     """
     Client for fetching releases from GitHub.
@@ -210,10 +142,14 @@ class GitHubFetcher:
 
     def __init__(self) -> None:
         """Initialize GitHub fetcher with HTTP client and optional authentication."""
-        # Check GITHUB_TOKEN first (standard), then GH_TOKEN (gh CLI compatibility)
-        token = os.environ.get("GITHUB_TOKEN")
-        if token is None:
-            token = os.environ.get("GH_TOKEN")
+        # Check GITHUB_TOKEN first (standard), then GH_TOKEN (gh CLI compatibility). A
+        # variable set to an empty string counts as unset.
+        token: str | None = None
+        for variable in ("GITHUB_TOKEN", "GH_TOKEN"):
+            value = os.environ.get(variable, "").strip()
+            if len(value) > 0:
+                token = value
+                break
 
         self._token = token
 
@@ -546,26 +482,6 @@ class DirectFetcher:
         response = await self.client.get(url)
         response.raise_for_status()
         return response.text or ""
-
-    async def head_request(self, url: str) -> int:
-        """
-        Make HEAD request to check if URL exists.
-
-        Parameters
-        ----------
-        url : str
-            URL to check.
-
-        Returns
-        -------
-        int
-            HTTP status code.
-        """
-        try:
-            response = await self.client.head(url)
-            return response.status_code or 0
-        except niquests.HTTPError:
-            return 404
 
     async def close(self) -> None:
         """Close HTTP client."""

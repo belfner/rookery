@@ -72,11 +72,11 @@ class SystemLinker:
         Parameters
         ----------
         bin_dir : Path, optional
-            System binary directory. Defaults to value from ROOKERY_BIN_DIR or /usr/local/bin.
+            Binary link directory. Defaults to ROOKERY_BIN_DIR or ~/.local/bin.
         desktop_dir : Path, optional
-            Desktop entries directory. Defaults to value from ROOKERY_DESKTOP_DIR or /usr/share/applications.
+            Desktop entries directory. Defaults to ROOKERY_DESKTOP_DIR or ~/.local/share/applications.
         man_dir : Path, optional
-            System man pages directory. Defaults to value from ROOKERY_MAN_DIR or /usr/share/man.
+            Man page link directory. Defaults to ROOKERY_MAN_DIR or ~/.local/share/man.
         sudo_manager : SudoManager | None
             Sudo manager for privilege elevation. If None, operates without sudo.
         """
@@ -290,7 +290,7 @@ class SystemLinker:
             (e.g., "man1:script.1") for multiple pages in same section.
         """
         # Extract actual section from compound key if present
-        actual_section = section.split(":")[0] if ":" in section else section
+        actual_section = section.partition(":")[0]
         section_dir = self.man_dir / actual_section
         link_path = section_dir / target.name
 
@@ -318,7 +318,7 @@ class SystemLinker:
             True if symlink was removed, False if it didn't exist.
         """
         # Extract actual section from compound key if present
-        actual_section = section.split(":")[0] if ":" in section else section
+        actual_section = section.partition(":")[0]
         link_path = self.man_dir / actual_section / name
 
         if not link_path.is_symlink():
@@ -447,7 +447,7 @@ class SystemLinker:
             man_pages = program.get_man_pages()
             for section, man_page in man_pages.items():
                 # Extract actual section from compound key if present
-                actual_section = section.split(":")[0] if ":" in section else section
+                actual_section = section.partition(":")[0]
                 link_path = self.man_dir / actual_section / man_page.name
                 if link_path.is_symlink() or link_path.exists():
                     existing["man"].append(link_path)
@@ -456,6 +456,38 @@ class SystemLinker:
             pass
 
         return existing
+
+    def owned_links(self, program: Program) -> list[Path]:
+        """
+        List the integration entries that removing this program's links would take.
+
+        Manifest and recorded links count only while they still point at their recorded
+        targets, the same test removal applies, so a path someone has since replaced or
+        repointed stays theirs.
+
+        Parameters
+        ----------
+        program : Program
+            Installed program to inspect.
+
+        Returns
+        -------
+        list[Path]
+            Symlinks, man page links, and the desktop entry belonging to the program.
+        """
+        manifest = self.manifest_links(program)
+        records = [*(manifest if manifest is not None else []), *program.read_state().links]
+        paths: list[Path] = []
+        for record in records:
+            path = Path(record.path)
+            if path in paths or not self._manages_link_path(path) or not self._is_recorded_link(record):
+                continue
+            paths.append(path)
+
+        desktop_file = self.desktop_dir / f"{program.name}.desktop"
+        if desktop_file.exists():
+            paths.append(desktop_file)
+        return paths
 
     def manifest_links(self, program: Program) -> list[LinkRecord] | None:
         """
@@ -482,7 +514,7 @@ class SystemLinker:
         records = [LinkRecord(str(self.bin_dir / path.name), str(path)) for path in binary_paths]
 
         for section, man_page in man_pages.items():
-            actual_section = section.split(":")[0] if ":" in section else section
+            actual_section = section.partition(":")[0]
             records.append(LinkRecord(str(self.man_dir / actual_section / man_page.name), str(man_page)))
 
         return records
@@ -571,28 +603,6 @@ class SystemLinker:
         """
         current = {record.path for record in manifest}
         return [record for record in recorded if record.path not in current and self._is_recorded_link(record)]
-
-    def stale_recorded_links(self, program: Program) -> list[LinkRecord]:
-        """
-        Return recorded links the program's current manifest no longer names.
-
-        A manifest that cannot be read yields nothing, since it cannot say which of the
-        records it still names.
-
-        Parameters
-        ----------
-        program : Program
-            Program whose recorded links should be compared against its manifest.
-
-        Returns
-        -------
-        list[LinkRecord]
-            Records safe to remove.
-        """
-        manifest = self.manifest_links(program)
-        if manifest is None:
-            return []
-        return self._stale_records(program.read_state().links, manifest)
 
     def sync_links(self, program: Program) -> list[Path]:
         """
@@ -803,7 +813,7 @@ class SystemLinker:
                 continue
 
             # Extract actual section from compound key if present
-            actual_section = section.split(":")[0] if ":" in section else section
+            actual_section = section.partition(":")[0]
             link_path = self.man_dir / actual_section / man_page.name
             needs_create = False
 

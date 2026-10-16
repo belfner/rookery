@@ -17,9 +17,9 @@ from rookery.file_io import atomic_copy
 
 class Installer:
     """
-    Handles program installation and cleanup operations.
+    Handles archive extraction and system package installation.
 
-    Manages temporary downloads, archive extraction, and removal of old versions.
+    Holds the download directory for an install and extracts archives into place.
     """
 
     def __init__(self, download_dir: Path | None = None) -> None:
@@ -29,7 +29,7 @@ class Installer:
         Parameters
         ----------
         download_dir : Path, optional
-            Directory for temporary downloads. Defaults to value from ROOKERY_TEMP_DIR or /tmp/rookery.
+            Directory for temporary downloads. Defaults to ROOKERY_TEMP_DIR, or the system temp directory.
         """
         if download_dir is None:
             download_dir = config.temp_dir
@@ -66,49 +66,6 @@ class Installer:
                 zf.extractall(dest_dir)
         else:
             raise ValueError(f"Unsupported archive type: {suffix}")
-
-    def cleanup_old_versions(
-        self,
-        install_dir: Path,
-        keep_pattern: str | None = None,
-    ) -> list[Path]:
-        """
-        Remove old version directories.
-
-        Scans install directory for versioned subdirectories and removes
-        all except the one matching keep_pattern.
-
-        Parameters
-        ----------
-        install_dir : Path
-            Program installation directory.
-        keep_pattern : str | None
-            Directory name pattern to keep (e.g., "blender-5.0.1-linux-x64").
-            If None, all versioned directories are kept.
-
-        Returns
-        -------
-        list[Path]
-            List of removed directory paths.
-        """
-        if not install_dir.exists():
-            return []
-
-        removed = []
-        for item in install_dir.iterdir():
-            if not item.is_dir():
-                continue
-
-            # Skip if this is the directory to keep
-            if keep_pattern and item.name == keep_pattern:
-                continue
-
-            # Check if directory name contains version-like pattern
-            if any(c.isdigit() for c in item.name) and any(sep in item.name for sep in [".", "-"]):
-                shutil.rmtree(item)
-                removed.append(item)
-
-        return removed
 
     def extract_specific_files(
         self,
@@ -157,15 +114,7 @@ class Installer:
             tmp_path = Path(tmpdir)
 
             # Extract entire archive to temp
-            suffix = archive_path.suffix.lower()
-            if suffix in (".tar", ".tgz") or archive_path.name.endswith((".tar.gz", ".tar.xz", ".tar.bz2")):
-                with tarfile.open(archive_path) as tar:
-                    tar.extractall(tmp_path, filter="data")
-            elif suffix == ".zip":
-                with zipfile.ZipFile(archive_path) as zf:
-                    zf.extractall(tmp_path)
-            else:
-                raise ValueError(f"Unsupported archive type: {suffix}")
+            self.extract_archive(archive_path, tmp_path)
 
             # Find and copy matching files
             for pattern, dest_name in file_patterns.items():
@@ -190,34 +139,6 @@ class Installer:
                     raise ValueError(f"Pattern '{pattern}' not found in archive")
 
         return extracted
-
-    def cleanup_temp_files(self, pattern: str = "*") -> list[Path]:
-        """
-        Remove temporary download files.
-
-        Parameters
-        ----------
-        pattern : str
-            Glob pattern for files to remove. Defaults to "*" (all files).
-
-        Returns
-        -------
-        list[Path]
-            List of removed file paths.
-        """
-        if not self.download_dir.exists():
-            return []
-
-        removed = []
-        for item in self.download_dir.glob(pattern):
-            if item.is_file():
-                item.unlink()
-                removed.append(item)
-            elif item.is_dir():
-                shutil.rmtree(item)
-                removed.append(item)
-
-        return removed
 
     def get_deb_dependencies(self, deb_path: Path, main_package_name: str) -> list[dict[str, str]]:
         """
@@ -260,39 +181,38 @@ class Installer:
         except subprocess.CalledProcessError as e:
             raise RuntimeError(f"Failed to check dependencies: {e.stderr}") from e
 
-        packages = []
-
+        # Each package apt would install or upgrade appears on exactly one "Inst" line;
+        # the indented summary sections also list suggested packages apt leaves out.
+        pkg_names: list[str] = []
         for line in result.stdout.splitlines():
-            if "NEW packages" in line:
+            match = re.match(r"^Inst (\S+)", line)
+            if match is None:
                 continue
-            if "will be upgraded" in line:
-                continue
+            pkg_name = match.group(1)
+            if pkg_name != main_package_name and pkg_name not in pkg_names:
+                pkg_names.append(pkg_name)
 
-            if line.startswith("  ") and not line.startswith("   "):
-                pkg_names = line.strip().split()
-                for pkg_name in pkg_names:
-                    if pkg_name == main_package_name:
-                        continue
+        packages = []
+        for pkg_name in pkg_names:
+            version_result = subprocess.run(
+                ["apt-cache", "policy", pkg_name],
+                capture_output=True,
+                text=True,
+            )
 
-                    version_result = subprocess.run(
-                        ["apt-cache", "policy", pkg_name],
-                        capture_output=True,
-                        text=True,
-                    )
+            version_match = re.search(r"Candidate:\s+(\S+)", version_result.stdout)
+            version = version_match.group(1) if version_match else "unknown"
 
-                    version_match = re.search(r"Candidate:\s+(\S+)", version_result.stdout)
-                    version = version_match.group(1) if version_match else "unknown"
+            installed_match = re.search(r"Installed:\s+(\S+)", version_result.stdout)
+            is_installed = installed_match and installed_match.group(1) != "(none)"
 
-                    installed_match = re.search(r"Installed:\s+(\S+)", version_result.stdout)
-                    is_installed = installed_match and installed_match.group(1) != "(none)"
-
-                    packages.append(
-                        {
-                            "name": pkg_name,
-                            "version": version,
-                            "status": "already-installed" if is_installed else "new",
-                        }
-                    )
+            packages.append(
+                {
+                    "name": pkg_name,
+                    "version": version,
+                    "status": "already-installed" if is_installed else "new",
+                }
+            )
 
         return packages
 

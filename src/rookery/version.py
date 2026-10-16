@@ -9,8 +9,10 @@ def compare_versions(v1: str, v2: str) -> int:
     """
     Compare two semantic version strings.
 
-    Handles versions with optional 'v' prefix and letter suffixes (e.g., "3.6.0b").
-    Numeric parts are compared first, then letter suffixes if numeric parts are equal.
+    Handles versions with optional 'v' prefix, letter suffixes (e.g., "3.6.0b"), and
+    hyphenated prereleases (e.g., "0.10.0-rc1"). Numeric parts are compared first, then
+    letter suffixes, then prereleases, which sort before the release they precede.
+    Strings outside this shape, such as RELEASE.* timestamps, compare as plain strings.
 
     Parameters
     ----------
@@ -34,14 +36,17 @@ def compare_versions(v1: str, v2: str) -> int:
     1
     >>> compare_versions("v1.0.0", "1.0.0")
     0
+    >>> compare_versions("0.10.0", "0.10.0-rc1")
+    1
     """
     # Strip 'v' prefix if present
     v1 = v1.lstrip("v")
     v2 = v2.lstrip("v")
 
-    # Extract numeric part and suffix
-    v1_match = re.match(r"^([0-9.]+)([a-z]*)$", v1)
-    v2_match = re.match(r"^([0-9.]+)([a-z]*)$", v2)
+    # Extract numeric part, letter suffix, and hyphenated prerelease
+    pattern = r"^([0-9.]+)([a-z]*)(?:-([0-9A-Za-z.]+))?$"
+    v1_match = re.match(pattern, v1)
+    v2_match = re.match(pattern, v2)
 
     if not v1_match or not v2_match:
         # Fallback to string comparison if regex doesn't match
@@ -51,8 +56,8 @@ def compare_versions(v1: str, v2: str) -> int:
             return 1
         return 0
 
-    v1_num, v1_suffix = v1_match.groups()
-    v2_num, v2_suffix = v2_match.groups()
+    v1_num, v1_suffix, v1_pre = v1_match.groups()
+    v2_num, v2_suffix, v2_pre = v2_match.groups()
 
     # Compare numeric parts
     v1_parts = [int(x) for x in v1_num.split(".")]
@@ -72,14 +77,18 @@ def compare_versions(v1: str, v2: str) -> int:
 
     # Numeric parts are equal, compare suffixes
     # No suffix is considered less than any suffix (stable < beta)
-    if not v1_suffix and not v2_suffix:
+    if v1_suffix != v2_suffix:
+        if len(v1_suffix) == 0:
+            return -1  # v1 (no suffix/stable) < v2 (with suffix/beta)
+        if len(v2_suffix) == 0:
+            return 1  # v1 (with suffix/beta) > v2 (no suffix/stable)
+        return -1 if v1_suffix < v2_suffix else 1
+
+    # A prerelease precedes the release it names (0.10.0-rc1 < 0.10.0)
+    if v1_pre == v2_pre:
         return 0
-    if not v1_suffix:
-        return -1  # v1 (no suffix/stable) < v2 (with suffix/beta)
-    if not v2_suffix:
-        return 1  # v1 (with suffix/beta) > v2 (no suffix/stable)
-    if v1_suffix < v2_suffix:
-        return -1
-    if v1_suffix > v2_suffix:
+    if v1_pre is None:
         return 1
-    return 0
+    if v2_pre is None:
+        return -1
+    return -1 if v1_pre < v2_pre else 1

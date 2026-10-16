@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 from enum import Enum
 from pathlib import Path
 
@@ -26,7 +27,8 @@ class Config:
             "ROOKERY_DESKTOP_DIR", Path("~/.local/share/applications").expanduser()
         )
         self.man_dir = self._get_path_from_env("ROOKERY_MAN_DIR", Path("~/.local/share/man").expanduser())
-        self.temp_dir = self._get_path_from_env("ROOKERY_TEMP_DIR", Path("/tmp/rookery"))
+        # Parent of the private per-install download directories
+        self.temp_dir = self._get_path_from_env("ROOKERY_TEMP_DIR", Path(tempfile.gettempdir()))
 
         # Per-program lock files live here. A user-owned directory outside the install
         # tree keeps the lock available before the install root exists and after a
@@ -120,25 +122,6 @@ class Config:
             return max(1, int(value))
         except ValueError:
             return 4
-
-    def is_user_local_config(self) -> bool:
-        """
-        Check if all integration paths are under user home directory.
-
-        Returns
-        -------
-        bool
-            True if bin_dir, desktop_dir, and man_dir are all user-local.
-        """
-        user_home = Path.home()
-        try:
-            return (
-                self.bin_dir.is_relative_to(user_home)
-                and self.desktop_dir.is_relative_to(user_home)
-                and self.man_dir.is_relative_to(user_home)
-            )
-        except ValueError:
-            return False
 
 
 # Module-level singleton - initialized on import

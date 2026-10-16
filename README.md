@@ -182,7 +182,7 @@ A pin holds a program at its pinned version: `rookery update` skips pinned progr
 | `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`). Must be writable by you |
 | `ROOKERY_DESKTOP_DIR` | Desktop entry directory. Must be writable by you |
 | `ROOKERY_MAN_DIR` | Man page directory. Must be writable by you |
-| `ROOKERY_TEMP_DIR` | Download staging directory (default: `/tmp/rookery`) |
+| `ROOKERY_TEMP_DIR` | Parent of the private per-install download directories (default: the system temp directory, usually `/tmp`) |
 | `ROOKERY_MAX_PARALLEL` | Concurrency limit for batch installs and updates (default: 10) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token, lifting the anonymous 60 requests/hour limit |
 

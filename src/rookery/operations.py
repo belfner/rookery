@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import re
 import shutil
@@ -11,6 +12,8 @@ from abc import (
     ABC,
     abstractmethod,
 )
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import (
     dataclass,
     field,
@@ -33,6 +36,30 @@ from rookery.installer import Installer
 # Digest shape published by the "<file>.sha256sum" convention: 64 lowercase hex characters.
 SHA256_HEX_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
+# True while a batch command runs installs under its live progress display, where a
+# terminal prompt cannot be drawn reliably and would stall every concurrent install.
+_noninteractive: contextvars.ContextVar[bool] = contextvars.ContextVar("rookery_noninteractive", default=False)
+
+
+@contextmanager
+def noninteractive_installs() -> Iterator[None]:
+    """
+    Mark the installs started inside this block as unable to prompt on the terminal.
+
+    Tasks created inside the block inherit the mark, so a batch enters it once around
+    its concurrent installs.
+
+    Yields
+    ------
+    None
+        Control returns to the caller with prompting disabled.
+    """
+    token = _noninteractive.set(True)
+    try:
+        yield
+    finally:
+        _noninteractive.reset(token)
+
 
 @dataclass
 class InstallContext:
@@ -47,14 +74,11 @@ class InstallContext:
         Installer instance with utilities.
     downloads : dict[str, Path]
         Downloaded files keyed by operation ID.
-    temp_files : list[Path]
-        Temporary files to clean up.
     """
 
     install_dir: Path
     installer: Installer
     downloads: dict[str, Path] = field(default_factory=dict)
-    temp_files: list[Path] = field(default_factory=list)
 
 
 class InstallOperation(ABC):
@@ -102,7 +126,6 @@ class DownloadArchive(InstallOperation):
             atomic_write_bytes(download_path, response.content)
 
         context.downloads[self.operation_id] = download_path
-        context.temp_files.append(download_path)
 
 
 class ExtractFiles(InstallOperation):
@@ -420,6 +443,12 @@ class InstallDebSystemWide(InstallOperation):
         new_deps = [d for d in dependencies if d["status"] == "new"]
 
         if new_deps and not self.auto_accept:
+            if _noninteractive.get():
+                names = ", ".join(dep["name"] for dep in new_deps)
+                raise RuntimeError(
+                    f"installing {self.package_name} also installs new dependencies ({names}), "
+                    "which needs confirmation; install or update it on its own to confirm"
+                )
             print(f"\nInstalling {self.package_name} will also install the following dependencies:")
             for dep in new_deps:
                 print(f"  {dep['name']} ({dep['version']})")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import sys
 from pathlib import Path
 
 from rookery.program import Program
@@ -42,20 +43,23 @@ def discover_programs() -> dict[str, type[Program]]:
         module_name = f"rookery.programs.{py_file.stem}"
         try:
             module = importlib.import_module(module_name)
-
-            # Find Program subclasses in module
-            for _name, obj in inspect.getmembers(module, inspect.isclass):
-                if issubclass(obj, Program) and obj is not Program:
-                    # Instantiate to get name attribute
-                    try:
-                        instance = obj()
-                        registry[instance.name] = obj
-                    except Exception:
-                        # Skip classes that can't be instantiated
-                        continue
-        except Exception:
-            # Skip modules that can't be imported
+        except Exception as e:
+            # A broken plugin is reported and left out, so the rest of the catalog loads
+            print(f"rookery: skipping {module_name}: {e}", file=sys.stderr)
             continue
+
+        # Concrete Program subclasses defined in this module; imported base classes
+        # belong to the module that defines them
+        for _name, obj in inspect.getmembers(module, inspect.isclass):
+            if not issubclass(obj, Program) or obj.__module__ != module_name or inspect.isabstract(obj):
+                continue
+            # Instantiate to get name attribute
+            try:
+                instance = obj()
+            except Exception as e:
+                print(f"rookery: skipping {module_name}.{obj.__name__}: {e}", file=sys.stderr)
+                continue
+            registry[instance.name] = obj
 
     _registry_cache = registry
     return registry
