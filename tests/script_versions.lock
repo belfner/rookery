@@ -1,7 +1,7 @@
 # Declared version and payload digest for every script program.
 # Regenerate with `make relock-scripts` after bumping a program's version.
 # Columns: program version sha256
-clip         1.0.0 5474f120ec7a1fe6de5314dc70633cbf6879048ac744b3200d4e8647660786a8
+clip         1.1.0 41475d35faed0ce6572c3d301465eb5cf1d2541cb32c8e027aa145c7fd5f3c4e
 cuda-run     1.1.2 f351df0617e98cb280671f29fe12294a4d6c5f0b776521d69b312c8e93eb5704
 fasttarutils 1.0.1 ed266e51616f88d6e0a62544d74a1b39bd9643e91b2f090f4758481a81caf44a
 kpod         1.0.1 a89a62547953a69e8928a5c2f650bb361ad7b593c16b33449ad0fc74deb3574c
