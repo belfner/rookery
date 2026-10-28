@@ -552,7 +552,7 @@ wheels = [
 
 [[package]]
 name = "rookery"
-version = "0.11.0.dev1"
+version = "0.11.0"
 source = { editable = "." }
 dependencies = [
     { name = "niquests" },
