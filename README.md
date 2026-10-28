@@ -132,7 +132,7 @@ Inspect what is installed:
 
 ```bash
 uvx rookery list                # Installed programs, versions, pin and link status
-uvx rookery list --all          # Adds every other program in the catalog as Available
+uvx rookery list --all          # Adds every other program in the catalog as Available, plus a Default column
 uvx rookery info                # Configuration, paths, and stats
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```
@@ -143,6 +143,7 @@ Install:
 uvx rookery install nvim          # Latest version
 uvx rookery install nvim@0.10.4   # Specific version
 uvx rookery install --all         # Everything in the catalog
+uvx rookery install --default     # The default set (every program unless it opts out)
 uvx rookery install nvim --no-links   # Skip system integration
 ```
 

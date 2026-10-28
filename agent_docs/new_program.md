@@ -109,11 +109,15 @@ Programs whose desktop entry needs no runtime values can instead set the
 `desktop_entry_config` class attribute, which the default `get_desktop_entry()`
 returns when the program has binaries.
 
+## Default Install Set
+
+`install --default` installs the uninstalled programs whose `default_install` class attribute is True, which `Program` sets for every program. A program that belongs in the catalog but outside the default set declares `default_install = False`; `install --all` still installs it, and `list --all` leaves its Default cell blank.
+
 ## Host Availability
 
 `Program.host_availability()` returns an `Availability(ok, reason)` describing whether this host has the tools the installer will run. The default answers `ok=True`. A subclass whose install operations shell out to a system tool overrides it with a `shutil.which` probe and phrases `reason` as a fragment that follows the program name, for example `installs through apt, which is missing on this host (apt-get)`. `DebProgram` does this for the apt and dpkg commands.
 
-Commands consult it before any privilege prompt or download: `install --all` and `update` skip an unavailable program with a yellow `Skipped name: reason` line, `install name` and `update name` exit 1 with the reason, and `list --all` shows it as `Unavailable`.
+Commands consult it before any privilege prompt or download: `install --all`, `install --default`, and `update` skip an unavailable program with a yellow `Skipped name: reason` line, `install name` and `update name` exit 1 with the reason, and `list --all` shows it as `Unavailable`.
 
 ## Version Management (list / exact-install / pin)
 

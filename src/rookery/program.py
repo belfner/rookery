@@ -124,6 +124,9 @@ class Program(ABC):
     desktop_entry_config : dict[str, str] | None
         Desktop entry configuration fields.
         Returned by get_desktop_entry() if binaries exist.
+    default_install : bool
+        Membership in the default set that `install --default` installs.
+        True for every program unless a subclass sets it to False.
     """
 
     # Declarative attributes - override in subclasses
@@ -132,6 +135,7 @@ class Program(ABC):
     binary_files: list[Path] = []
     man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None
+    default_install: bool = True
 
     # Version source for listing/resolving versions. None means legacy (latest-only) behavior.
     version_source: VersionSource | None = None

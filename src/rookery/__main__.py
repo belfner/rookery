@@ -346,7 +346,8 @@ def list_command(
 
     Displays a table with program name, current version, installation status,
     and link status. Shows programs that are currently installed; use --all to
-    also list every other registered program as available to install.
+    also list every other registered program as available to install, with a
+    Default column marking the members of the `install --default` set.
     """
     programs = sorted(list_programs(), key=lambda p: p.name)
     installed = [p for p in programs if p.version_file.exists()]
@@ -371,6 +372,8 @@ def list_command(
     table.add_column("Status", style="magenta")
     table.add_column("Pin", style="yellow")
     table.add_column("Links", style="blue")
+    if all_flag:
+        table.add_column("Default", style="cyan")
 
     for prog in rows:
         pin = get_pin(prog)
@@ -387,13 +390,10 @@ def list_command(
             current = "[dim]—[/dim]"
             status = "[dim]Unavailable[/dim]"
 
-        table.add_row(
-            prog.name,
-            current,
-            status,
-            pin_display,
-            f"[{link_style}]{link_display}[/]",
-        )
+        cells = [prog.name, current, status, pin_display, f"[{link_style}]{link_display}[/]"]
+        if all_flag:
+            cells.append("yes" if prog.default_install else "")
+        table.add_row(*cells)
 
     console.print(table)
 
@@ -405,6 +405,10 @@ def install_command(
     pin: Annotated[bool, typer.Option("--pin", help="Pin the installed version after install")] = False,
     unpin: Annotated[bool, typer.Option("--unpin", help="Clear any pin after install")] = False,
     all_flag: AllFlag = False,
+    default_flag: Annotated[
+        bool,
+        typer.Option("--default", "-d", help="Install every uninstalled program in the default set"),
+    ] = False,
     force: ForceFlag = False,
     yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
@@ -414,11 +418,21 @@ def install_command(
 
     Use PROGRAM@VERSION (or --version) to install an exact version; with no version the
     latest is installed. Use --pin to hold the installed version, --unpin to clear a pin.
-    Use --all to install all uninstalled programs. Use --no-links to skip system links.
+    Use --all to install all uninstalled programs, or --default to install the uninstalled
+    programs in the default set. Use --no-links to skip system links.
     """
-    if (program is None) and not all_flag:
-        console.print("[yellow]Please specify a program name or use --all[/]")
+    bulk = all_flag or default_flag
+    if program is None and not bulk:
+        console.print("[yellow]Please specify a program name, --all, or --default[/]")
         console.print(f"[yellow]Example: {RUN} install nvim[/]")
+        raise typer.Exit(1)
+
+    if all_flag and default_flag:
+        console.print("[red]--all and --default are mutually exclusive[/]")
+        raise typer.Exit(1)
+
+    if program is not None and bulk:
+        console.print("[red]A program name cannot be combined with --all or --default[/]")
         raise typer.Exit(1)
 
     if pin and unpin:
@@ -427,7 +441,7 @@ def install_command(
 
     # Single-program-only options cannot apply to a bulk install.
     if program is None and (version is not None or pin or unpin or force):
-        console.print("[red]--version, --pin, --unpin, and --force require a single program, not --all[/]")
+        console.print("[red]--version, --pin, --unpin, and --force require a single program, not --all or --default[/]")
         raise typer.Exit(1)
 
     if program is not None:
@@ -447,12 +461,18 @@ def install_command(
             yes=yes,
         )
     else:
-        # Install all uninstalled programs
+        # Install every uninstalled program, or the uninstalled members of the default set
         programs = list_programs()
+        if default_flag:
+            programs = [p for p in programs if p.default_install]
+            if len(programs) == 0:
+                console.print("[yellow]No programs are in the default set[/]")
+                return
         uninstalled = [p for p in programs if not p.version_file.exists()]
 
         if len(uninstalled) == 0:
-            console.print("[green]All programs are already installed[/]")
+            scope = "default programs" if default_flag else "programs"
+            console.print(f"[green]All {scope} are already installed[/]")
             return
 
         uninstalled = drop_unavailable(console, uninstalled)
