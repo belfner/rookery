@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+
 from rookery.file_io import atomic_write_text
 from rookery.github_program import GitHubProgram
 
@@ -31,6 +33,6 @@ class AppImageProgram(GitHubProgram):
         wrapper_script = self.install_dir / self.name
         atomic_write_text(
             wrapper_script,
-            f'#!/bin/bash\nexec "{appimage_file}" --no-sandbox "$@"\n',
+            f'#!/bin/bash\nexec {shlex.quote(str(appimage_file))} --no-sandbox "$@"\n',
             mode=0o755,
         )
