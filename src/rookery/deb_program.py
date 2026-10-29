@@ -30,7 +30,7 @@ class DebProgram(GitHubProgram):
       InstallDebSystemWide, as netron.py does
 
     The class handles:
-    - Version tracking in /opt/rookery-programs/{program_name}/.version
+    - Version tracking in {install_root}/{program_name}/.version
     - Package name mapping for uninstallation
     - Host availability (apt and dpkg on PATH) and the pin advisory
     """

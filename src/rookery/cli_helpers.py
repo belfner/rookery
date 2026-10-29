@@ -96,22 +96,40 @@ def validate_sudo_or_exit(console: Console, skip_hint: str | None = None) -> Sud
     return sudo_mgr
 
 
+def shell_path(path: Path) -> str:
+    """
+    Spell a path for a shell line, writing a location under the home directory as ``$HOME/...``.
+
+    Parameters
+    ----------
+    path : Path
+        Absolute path.
+
+    Returns
+    -------
+    str
+        The path, with the home directory prefix replaced by ``$HOME``.
+    """
+    try:
+        return f"$HOME/{path.relative_to(Path.home())}"
+    except ValueError:
+        return str(path)
+
+
 def check_and_warn_path(console: Console) -> None:
     """
-    Warn if user-local bin directory is not in PATH.
+    Warn if the configured bin directory is not in PATH.
 
     Parameters
     ----------
     console : Console
         Rich console for output.
     """
-    # Only warn for default user-local path
-    default_user_bin = Path.home() / ".local" / "bin"
-    if config.bin_dir == default_user_bin and not check_path_in_user_path_env(config.bin_dir):
+    if not check_path_in_user_path_env(config.bin_dir):
         console.print(
-            "\n[yellow]⚠ Warning: ~/.local/bin is not in your PATH[/]\n"
+            f"\n[yellow]⚠ Warning: {config.bin_dir} is not in your PATH, so installed commands will not be found[/]\n"
             "[dim]Add this to your ~/.bashrc or ~/.zshrc:[/]\n"
-            '[cyan]export PATH="$HOME/.local/bin:$PATH"[/]\n'
+            f'[cyan]export PATH="{shell_path(config.bin_dir)}:$PATH"[/]\n'
         )
 
 

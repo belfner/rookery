@@ -12,6 +12,7 @@ from typing import Annotated
 
 import typer
 from rich.console import Console
+from rich.padding import Padding
 from rich.progress import (
     BarColumn,
     Progress,
@@ -59,6 +60,7 @@ from rookery.state import (
     program_state_lock,
     program_state_lock_async,
 )
+from rookery.status_checks import STATUS_CHECKS
 from rookery.sudo import SudoManager
 from rookery.sudo_requirement import SudoRequirement
 from rookery.system import SystemLinker
@@ -106,6 +108,14 @@ NoDowngradeFlag = Annotated[
     typer.Option("--no-downgrade", help="Skip programs where installed version is newer than latest available"),
 ]
 
+AllowForeignRootFlag = Annotated[
+    bool,
+    typer.Option(
+        "--allow-foreign-root",
+        help="Continue without prompting when the bin directory links into another install root",
+    ),
+]
+
 
 def _parse_program_selector(program: str, version_opt: str | None) -> tuple[str, str | None]:
     """
@@ -144,7 +154,7 @@ def _parse_program_selector(program: str, version_opt: str | None) -> tuple[str,
     return name, at_version
 
 
-def _resolve_install_sudo(prog: Program, no_links: bool) -> SudoManager | None:
+def _resolve_install_sudo(prog: Program, no_links: bool, allow_foreign_root: bool) -> SudoManager | None:
     """
     Explain and authenticate every elevation reason for a single install.
 
@@ -157,13 +167,15 @@ def _resolve_install_sudo(prog: Program, no_links: bool) -> SudoManager | None:
         Program being installed.
     no_links : bool
         Whether link creation is skipped.
+    allow_foreign_root : bool
+        Skip the confirmation for links into another install root.
 
     Returns
     -------
     SudoManager | None
         Validated sudo manager, or None when no reason applies.
     """
-    return preflight(console, [prog], create_links=not no_links)
+    return preflight(console, [prog], create_links=not no_links, allow_foreign_root=allow_foreign_root)
 
 
 def _switch_action(current: str, target: str) -> str:
@@ -206,6 +218,7 @@ def _install_single(
     no_links: bool,
     force: bool,
     yes: bool,
+    allow_foreign_root: bool,
     reason: str | None = None,
 ) -> None:
     """
@@ -227,6 +240,8 @@ def _install_single(
         Reinstall even when already installed at the same version.
     yes : bool
         Skip the version-switch confirmation prompt.
+    allow_foreign_root : bool
+        Skip the confirmation for links into another install root.
     reason : str | None
         Optional pin reason, by default None.
     """
@@ -282,7 +297,7 @@ def _install_single(
                 console.print("Cancelled")
                 raise typer.Exit(0)
 
-    sudo_mgr = _resolve_install_sudo(prog, no_links)
+    sudo_mgr = _resolve_install_sudo(prog, no_links, allow_foreign_root)
 
     async def install_then_pin() -> tuple[str | None, bool, str | None]:
         """
@@ -412,6 +427,7 @@ def install_command(
     force: ForceFlag = False,
     yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Install new program(s), optionally at a specific version.
@@ -419,7 +435,9 @@ def install_command(
     Use PROGRAM@VERSION (or --version) to install an exact version; with no version the
     latest is installed. Use --pin to hold the installed version, --unpin to clear a pin.
     Use --all to install all uninstalled programs, or --default to install the uninstalled
-    programs in the default set. Use --no-links to skip system links.
+    programs in the default set. Use --no-links to skip system links. Use
+    --allow-foreign-root to continue without prompting when the bin directory links
+    into another install root.
     """
     bulk = all_flag or default_flag
     if program is None and not bulk:
@@ -459,6 +477,7 @@ def install_command(
             no_links=no_links,
             force=force,
             yes=yes,
+            allow_foreign_root=allow_foreign_root,
         )
     else:
         # Install every uninstalled program, or the uninstalled members of the default set
@@ -481,7 +500,7 @@ def install_command(
             return
 
         # Explain and satisfy every elevation reason once, before the concurrent installs start
-        sudo_mgr = preflight(console, uninstalled, create_links=not no_links)
+        sudo_mgr = preflight(console, uninstalled, create_links=not no_links, allow_foreign_root=allow_foreign_root)
 
         failed = asyncio.run(install_programs(uninstalled, console, sudo_mgr=sudo_mgr, create_links=not no_links))
 
@@ -500,6 +519,7 @@ def update_command(
     yes: YesFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip creating system links")] = False,
     no_downgrade: NoDowngradeFlag = False,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Update already-installed program(s).
@@ -509,6 +529,8 @@ def update_command(
     Use --yes/-y to skip confirmation prompt.
     Use --no-links to skip creating system links. System-package programs can still require sudo.
     Use --no-downgrade to skip programs where installed version is newer than latest.
+    Use --allow-foreign-root to continue without prompting when the bin directory links
+    into another install root.
     """
     if program is not None:
         # Update single program
@@ -556,7 +578,7 @@ def update_command(
             if checked is None:
                 return
 
-            sudo_mgr = preflight(console, [prog], create_links=not no_links)
+            sudo_mgr = preflight(console, [prog], create_links=not no_links, allow_foreign_root=allow_foreign_root)
 
             success, attempted, _version = asyncio.run(
                 update_program(
@@ -712,7 +734,9 @@ def update_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        sudo_mgr = preflight(console, programs_to_update, create_links=not no_links)
+        sudo_mgr = preflight(
+            console, programs_to_update, create_links=not no_links, allow_foreign_root=allow_foreign_root
+        )
 
         failed = asyncio.run(
             update_programs(
@@ -735,7 +759,9 @@ def update_command(
             raise typer.Exit(1)
 
 
-def _check_uninstall_privileges(console: Console, programs_to_check: list[Program], no_links: bool) -> None:
+def _check_uninstall_privileges(
+    console: Console, programs_to_check: list[Program], no_links: bool, allow_foreign_root: bool
+) -> None:
     """
     Reject unwritable integration directories and cache sudo for apt-based removals.
 
@@ -750,16 +776,18 @@ def _check_uninstall_privileges(console: Console, programs_to_check: list[Progra
         Programs being uninstalled.
     no_links : bool
         Whether link removal is skipped.
+    allow_foreign_root : bool
+        Skip the confirmation for links into another install root.
 
     Raises
     ------
     typer.Exit
-        An integration directory holding links to remove is not writable, or sudo
-        could not be validated.
+        An integration directory holding links to remove is not writable, sudo could
+        not be validated, or the user declined to continue alongside another install root.
     """
     if not no_links:
         rookery_linked = [p for p in programs_to_check if p.sudo_requirement is not SudoRequirement.REQUIRED]
-        require_writable_integration(console, rookery_linked)
+        require_writable_integration(console, rookery_linked, allow_foreign_root=allow_foreign_root)
 
     if any(p.sudo_requirement == SudoRequirement.REQUIRED for p in programs_to_check):
         validate_sudo_or_exit(console, skip_hint="Hint: Some programs require sudo for uninstallation")
@@ -770,6 +798,7 @@ def uninstall_command(
     program: Annotated[str | None, typer.Argument(help="Program name to uninstall (optional)")] = None,
     all_flag: AllFlag = False,
     no_links: Annotated[bool, typer.Option("--no-links", help="Skip removing system links")] = False,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Uninstall program(s) by removing local installation.
@@ -795,7 +824,7 @@ def uninstall_command(
             console.print(f"[yellow]{program} is not installed[/]")
             raise typer.Exit(1)
 
-        _check_uninstall_privileges(console, [prog], no_links)
+        _check_uninstall_privileges(console, [prog], no_links, allow_foreign_root)
         if not uninstall_program(prog, console, skip_links=no_links):
             raise typer.Exit(1)
     else:
@@ -816,7 +845,7 @@ def uninstall_command(
             console.print("Cancelled")
             raise typer.Exit(0)
 
-        _check_uninstall_privileges(console, installed, no_links)
+        _check_uninstall_privileges(console, installed, no_links, allow_foreign_root)
         failed = uninstall_programs(installed, console, skip_links=no_links)
         if len(failed) > 0:
             raise typer.Exit(1)
@@ -826,6 +855,7 @@ def uninstall_command(
 def link_command(
     program: Annotated[str | None, typer.Argument(help="Program name (optional)")] = None,
     all_flag: AllFlag = False,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Manually create system symlinks, desktop entries, and man page links.
@@ -851,7 +881,7 @@ def link_command(
             if not prog.version_file.exists():
                 console.print(f"[yellow]{program} is not installed[/]")
                 raise typer.Exit(1)
-            require_writable_integration(console, [prog])
+            require_writable_integration(console, [prog], allow_foreign_root=allow_foreign_root)
             console.print(f"[cyan]Setting up {program}...[/]")
             results = linker.setup_program(prog)
 
@@ -892,7 +922,7 @@ def link_command(
             console.print("[yellow]No programs installed[/]")
             return
 
-        require_writable_integration(console, installed)
+        require_writable_integration(console, installed, allow_foreign_root=allow_foreign_root)
         console.print(f"[cyan]Setting up {len(installed)} program(s)...[/]")
         console.print()
 
@@ -950,11 +980,14 @@ def link_command(
         if already_linked_count > 0:
             console.print(f"  • {already_linked_count} program(s) already linked")
 
+    check_and_warn_path(console)
+
 
 @app.command(name="unlink")
 def unlink_command(
     program: Annotated[str | None, typer.Argument(help="Program name (optional)")] = None,
     all_flag: AllFlag = False,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Manually remove system symlinks, desktop entries, and man page links.
@@ -979,7 +1012,7 @@ def unlink_command(
             if not prog.version_file.exists():
                 console.print(f"[yellow]{program} is not installed[/]")
                 raise typer.Exit(1)
-            require_writable_integration(console, [prog])
+            require_writable_integration(console, [prog], allow_foreign_root=allow_foreign_root)
             console.print(f"[cyan]Removing links for {program}...[/]")
 
             results = linker.remove_program_links(prog)
@@ -1019,7 +1052,7 @@ def unlink_command(
             console.print("[yellow]No programs installed[/]")
             return
 
-        require_writable_integration(console, installed)
+        require_writable_integration(console, installed, allow_foreign_root=allow_foreign_root)
         console.print(f"[cyan]Removing links for {len(installed)} program(s)...[/]")
         console.print()
 
@@ -1162,6 +1195,31 @@ def info_command() -> None:
     console.print()
 
 
+@app.command(name="status")
+def status_command() -> None:
+    """
+    Check that installed programs are reachable and managed by this install root.
+
+    Reports the install root, whether the bin directory is on PATH, and any commands
+    in the bin directory that point into another rookery install root. Exits with
+    status 1 when any check warns.
+    """
+    results = [check() for check in STATUS_CHECKS]
+    console.print()
+    for result in results:
+        mark = "[green]✓[/]" if result.ok else "[yellow]⚠[/]"
+        console.print(f"{mark} [bold]{result.label}[/]: {result.summary}")
+        for detail in result.details:
+            if isinstance(detail, str):
+                console.print(f"    [dim]{detail}[/]")
+            else:
+                console.print(Padding(detail, (0, 0, 0, 4), expand=False))
+    console.print()
+
+    if not all(result.ok for result in results):
+        raise typer.Exit(1)
+
+
 @app.command(name="versions")
 def versions_command(
     program: Annotated[str, typer.Argument(help="Program name to list versions for")],
@@ -1254,6 +1312,7 @@ def pin_command(
     version: Annotated[str | None, typer.Argument(help="Version to pin (defaults to installed)")] = None,
     install: Annotated[bool, typer.Option("--install", help="Install the version, then pin it")] = False,
     reason: Annotated[str | None, typer.Option("--reason", help="Reason for the pin")] = None,
+    allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
     Pin (hold) a program at a version so the `update` command will not move it.
@@ -1263,7 +1322,17 @@ def pin_command(
     installed at that version.
     """
     if version is not None and install:
-        _install_single(program, version, pin=True, unpin=False, no_links=False, force=False, yes=False, reason=reason)
+        _install_single(
+            program,
+            version,
+            pin=True,
+            unpin=False,
+            no_links=False,
+            force=False,
+            yes=False,
+            allow_foreign_root=allow_foreign_root,
+            reason=reason,
+        )
         return
 
     try:

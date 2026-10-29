@@ -106,7 +106,7 @@ def test_late_pin_blocks_a_plain_install(installed: DummyProgram, monkeypatch: p
     from rookery import __main__
 
     monkeypatch.setattr(__main__, "get_program", lambda name: installed)
-    monkeypatch.setattr(__main__, "_resolve_install_sudo", lambda prog, no_links: None)
+    monkeypatch.setattr(__main__, "_resolve_install_sudo", lambda prog, no_links, allow_foreign_root: None)
     _pin_during_resolve(installed, "1.0.0")
 
     try:

@@ -56,8 +56,9 @@ def check_path_in_user_path_env(bin_dir: Path) -> bool:
     Returns
     -------
     bool
-        True if bin_dir is in PATH.
+        True if bin_dir is in PATH. Entries are taken literally, as command lookup
+        does, and compared after resolving symlinks; empty entries are skipped.
     """
+    target = bin_dir.resolve()
     path_env = os.environ.get("PATH", "")
-    path_dirs = [Path(p) for p in path_env.split(os.pathsep)]
-    return bin_dir in path_dirs
+    return any(Path(p).resolve() == target for p in path_env.split(os.pathsep) if len(p) > 0)

@@ -27,6 +27,7 @@ import typer
 from rich.console import Console
 
 from rookery.config import config
+from rookery.foreign_roots import confirm_foreign_roots
 from rookery.path_utils import is_path_writable
 from rookery.program import Program
 from rookery.sudo import SudoManager
@@ -197,17 +198,6 @@ def _explain(console: Console, plan: PrivilegePlan) -> None:
             console.print(f"    - [bold]{name}[/]")
         console.print()
 
-    if plan.creates_root:
-        only_reason = len(plan.system_programs) == 0
-        scope = "To avoid sudo entirely" if only_reason else "To remove the install-root reason"
-        console.print(
-            f"  [dim]{scope}, press Ctrl-C, then run in your shell:[/]\n"
-            '  [dim]  mkdir -p "$HOME/.local/share/rookery-programs"[/]\n'
-            '  [dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
-            "  [dim]Then rerun the same command. Keep the export in your shell startup\n"
-            "  so later commands use the same root.[/]\n"
-        )
-
 
 def untrusted_component(root: Path) -> Path | None:
     """
@@ -320,13 +310,14 @@ def _report_protected_paths(console: Console, paths: list[Path]) -> None:
     )
 
 
-def require_writable_integration(console: Console, programs: list[Program]) -> None:
+def require_writable_integration(console: Console, programs: list[Program], allow_foreign_root: bool = False) -> None:
     """
     Exit when linking or unlinking these programs would write a directory the user cannot.
 
     Link management runs as the invoking user, so the check covers the integration
     directories ``build_plan`` collects for these programs plus the directories holding
-    their existing links.
+    their existing links. When the bin directory holds links into another install root,
+    the user confirms before any link changes.
 
     Parameters
     ----------
@@ -334,11 +325,14 @@ def require_writable_integration(console: Console, programs: list[Program]) -> N
         Rich console for output.
     programs : list[Program]
         Programs whose links the command will create or remove.
+    allow_foreign_root : bool
+        Skip the confirmation for links into another install root, by default False.
 
     Raises
     ------
     typer.Exit
-        A needed integration directory is not writable by the current user.
+        A needed integration directory is not writable by the current user, or the
+        user declined to continue alongside another install root.
     """
     protected = build_plan(programs, create_links=True).protected_paths
     # An installed program's existing links can sit in directories the plan does not
@@ -354,8 +348,13 @@ def require_writable_integration(console: Console, programs: list[Program]) -> N
         _report_protected_paths(console, protected)
         raise typer.Exit(1)
 
+    if any(p.sudo_requirement is not SudoRequirement.REQUIRED for p in programs):
+        confirm_foreign_roots(console, allow_foreign_root)
 
-def preflight(console: Console, programs: list[Program], create_links: bool) -> SudoManager | None:
+
+def preflight(
+    console: Console, programs: list[Program], create_links: bool, allow_foreign_root: bool = False
+) -> SudoManager | None:
     """
     Explain and satisfy every elevation reason for a command, validating sudo once.
 
@@ -371,6 +370,8 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
         Programs the command will install.
     create_links : bool
         Whether system integration links will be created.
+    allow_foreign_root : bool
+        Skip the confirmation for links into another install root, by default False.
 
     Returns
     -------
@@ -380,15 +381,15 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
     Raises
     ------
     typer.Exit
-        The install root is unusable, or sudo could not be validated.
+        The install root is unusable, sudo could not be validated, or the user declined
+        to continue alongside another install root.
     """
     plan = build_plan(programs, create_links)
 
     if plan.root_state is RootState.INVALID:
         console.print(
             f"\n[red]Error: install root {plan.root} exists but is not a directory.[/]\n"
-            "[dim]Set ROOKERY_INSTALL_DIR to a directory, for example:[/]\n"
-            '[dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
+            "[dim]Unset ROOKERY_INSTALL_DIR to use the default, or point it at a directory.[/]\n"
         )
         raise typer.Exit(1)
 
@@ -396,9 +397,8 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
         console.print(
             f"\n[red]Error: install root {plan.root} exists but you cannot write into it.[/]\n"
             "[yellow]Rookery will not change ownership of a directory it did not create.[/]\n"
-            "[dim]Choose a root you own:[/]\n"
-            '[dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
-            "[dim]or have an administrator grant you access to the existing path.[/]\n"
+            "[dim]Unset ROOKERY_INSTALL_DIR to use the default, point it at a directory you own,\n"
+            "or have an administrator grant you access to the existing path.[/]\n"
         )
         raise typer.Exit(1)
 
@@ -413,11 +413,13 @@ def preflight(console: Console, programs: list[Program], create_links: bool) -> 
                 f"\n[red]Error: rookery will not create {plan.root} with sudo.[/]\n"
                 f"[yellow]{untrusted} is writable by an account other than root, so another\n"
                 "user could replace the new directory before rookery hands it to you.[/]\n"
-                "[dim]Choose a root under a root-owned path such as /opt, or one you can\n"
-                "create yourself:[/]\n"
-                '[dim]  export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"[/]\n'
+                "[dim]Unset ROOKERY_INSTALL_DIR to use the default, or point it at a root under\n"
+                "a root-owned path, or at one you can create yourself.[/]\n"
             )
             raise typer.Exit(1)
+
+    if create_links and any(p.sudo_requirement is not SudoRequirement.REQUIRED for p in programs):
+        confirm_foreign_roots(console, allow_foreign_root)
 
     if not plan.needs_sudo:
         return None

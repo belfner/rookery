@@ -21,7 +21,9 @@ class Config:
 
     def __init__(self) -> None:
         """Initialize configuration from environment variables with defaults."""
-        self.install_dir = self._get_path_from_env("ROOKERY_INSTALL_DIR", Path("/opt/rookery-programs"))
+        self.install_dir = self._get_path_from_env(
+            "ROOKERY_INSTALL_DIR", Path("~/.local/share/rookery-programs").expanduser()
+        )
         self.bin_dir = self._get_path_from_env("ROOKERY_BIN_DIR", Path("~/.local/bin").expanduser())
         self.desktop_dir = self._get_path_from_env(
             "ROOKERY_DESKTOP_DIR", Path("~/.local/share/applications").expanduser()
@@ -130,5 +132,5 @@ try:
 except ValueError as e:
     print(f"\nConfiguration Error: {e}", file=sys.stderr)
     print("\nEnvironment variables must be absolute paths.", file=sys.stderr)
-    print("Example: ROOKERY_INSTALL_DIR=/opt/rookery-programs\n", file=sys.stderr)
+    print("Example: ROOKERY_INSTALL_DIR=$HOME/.local/share/rookery-programs\n", file=sys.stderr)
     sys.exit(1)

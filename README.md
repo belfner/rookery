@@ -22,7 +22,7 @@ uvx rookery [OPTIONS] COMMAND [ARGS]
 Two things worth knowing before your first install:
 
 - **uv caches the runner.** Later `uvx rookery` commands reuse the cached copy and start fast. Run `uvx rookery@latest info` when you want to check for a newer rookery.
-- **The first install may ask for sudo once.** Rookery explains why before prompting. See [First run and sudo](#first-run-and-sudo).
+- **Programs land in your home directory.** Archive and script programs install under `~/.local/share/rookery-programs` and their commands link into `~/.local/bin`; system-package programs such as netron go through apt. See [Install location and sudo](#install-location-and-sudo).
 
 ## How it works
 
@@ -30,7 +30,7 @@ Rookery manages two kinds of program, and the difference shows up in where files
 
 **Archive and script programs** (most of the catalog):
 
-- The program is downloaded into its own directory under `/opt/rookery-programs/<name>/`
+- The program is downloaded into its own directory under `~/.local/share/rookery-programs/<name>/`
 - Commands are exposed by symlinking into `~/.local/bin`; man pages and desktop entries likewise
 - Version state lives beside the program in `.rookery-state.json`, with `.version` as the installed marker
 - Uninstalling removes that directory and its links
@@ -73,29 +73,25 @@ Examples below use `uvx rookery`. If you installed rookery persistently, drop th
 
 Two things that sound similar but are not: `rookery update` updates the programs rookery manages, not rookery itself. `rookery pin nvim` pins a managed program; `rookery@0.7.0` pins the runner.
 
-## First run and sudo
+## Install location and sudo
 
-On a fresh machine the install root `/opt/rookery-programs` does not exist yet, and `/opt` is owned by root. Rookery creates that directory once, then hands ownership to you, so ordinary installs afterwards need no password. It tells you this before prompting.
+Archive and script programs install under `~/.local/share/rookery-programs`, and their commands, man pages, and desktop entries link into directories under your home. Rookery creates the install root on first use, as you.
 
-Sudo is required in two cases:
+Sudo is required for system-package programs such as netron, on every install, update, and removal, because apt needs it. Rookery explains this before prompting.
 
-- Creating the install root, the one-time case above
-- Installing, updating, or removing a system-package program such as netron, because apt needs it every time
+`ROOKERY_INSTALL_DIR` moves the install root. Choosing and maintaining that location is up to you. If the directory does not exist and you cannot create it yourself, and every existing parent is owned by root and writable only by root (for example `/opt/rookery-programs`), rookery explains the reason, creates the directory with sudo once, and hands ownership to you, so later installs there run as you. A parent controlled by another account makes rookery stop instead. If the root already exists and you cannot write into it, rookery stops: it takes ownership only of a root it created itself, and the final directory is created exclusively, so a root that appeared concurrently is left to whoever made it.
 
-Nothing else elevates. Symlinks, desktop entries, and man pages are always written as you, even during a command that needed sudo for one of the reasons above.
+Keep any `ROOKERY_INSTALL_DIR` export in your shell startup. Rookery reads it on every invocation, so setting it for one command leaves later commands looking at a different root.
 
-To skip the install-root prompt entirely, put the root somewhere you already own:
+Linked commands run from the bin directory (`~/.local/bin` by default), so it has to be on your `PATH`. `install`, `update`, and `link` warn when it is missing from `PATH` and print the `export` line to add to your shell startup.
 
-```bash
-mkdir -p "$HOME/.local/share/rookery-programs"
-export ROOKERY_INSTALL_DIR="$HOME/.local/share/rookery-programs"
-```
+### Programs in another install root
 
-Keep that export in your shell startup. Rookery reads it on every invocation, so setting it for one command only would leave later commands looking at a different root.
+Rookery manages the programs under the current install root. Programs installed under a different root keep working through their links, but `list`, `update`, and `uninstall` see only the current root. `uvx rookery status` reports commands in the bin directory that point into another rookery root.
 
-If rookery finds an install root that already exists but you cannot write into, it stops and asks you to choose a different root. It takes ownership only of a root it created itself: the final directory is created exclusively, so a root that appeared concurrently is left to whoever made it.
+Commands that create or remove links (`install`, `update`, `uninstall`, `link`, `unlink`, `pin --install`) show the same report and ask for an explicit `y` before continuing. Pass `--allow-foreign-root` to continue after the report without the prompt, for example in scripts. Without a terminal to answer the prompt, the command exits with status 1 and names the flag. The bin directory is shared by every root, so installing or linking one of those programs here repoints its command at the copy in the current root. To manage the other root's programs, set `ROOKERY_INSTALL_DIR` to that root. Commands run with `--no-links`, and commands that touch system-package programs alone, skip the confirmation.
 
-`--no-links` skips creating symlinks, desktop entries, and man page links. It does not avoid creating the install root, and it does not make a system-package program unprivileged.
+`--no-links` skips creating symlinks, desktop entries, and man page links. The install root and system-package sudo prompts apply either way.
 
 ## Supported Programs
 
@@ -109,9 +105,11 @@ If rookery finds an install root that already exists but you cannot write into, 
 | dust | GitHub binary | Intuitive `du` alternative |
 | dysk | GitHub binary | Filesystem information tool |
 | eza | GitHub binary | Modern `ls` replacement |
+| fastfetch | GitHub binary | System information tool, plus a `get-distro` helper that prints the OS name (needs `jq`) |
 | fasttarutils | Python script | Multi-format tar, 7z, and zip compression/extraction (ftar/funtar) with parallel backends |
 | gdu | GitHub binary | Disk usage analyzer |
 | gping | GitHub binary | Ping with a graph |
+| helm | Standalone | Kubernetes package manager |
 | hyperfine | GitHub binary | Command-line benchmarking tool |
 | imcat | GitHub source | 24-bit terminal image viewer, compiled from source |
 | just | GitHub binary | Command runner |
@@ -134,6 +132,7 @@ Inspect what is installed:
 uvx rookery list                # Installed programs, versions, pin and link status
 uvx rookery list --all          # Adds every other program in the catalog as Available, plus a Default column
 uvx rookery info                # Configuration, paths, and stats
+uvx rookery status              # Health checks: install root, PATH, links into other install roots (exit 1 on any warning)
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```
 
@@ -179,8 +178,8 @@ A pin holds a program at its pinned version: `rookery update` skips pinned progr
 
 | Variable | Description |
 |----------|-------------|
-| `ROOKERY_INSTALL_DIR` | Installation directory (default: `/opt/rookery-programs`). Point this somewhere you own to avoid the one-time sudo prompt |
-| `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`). Must be writable by you |
+| `ROOKERY_INSTALL_DIR` | Installation directory (default: `~/.local/share/rookery-programs`). A root under a root-owned parent is created once with sudo |
+| `ROOKERY_BIN_DIR` | Binary symlink directory (default: `~/.local/bin`). Must be writable by you and on your `PATH` |
 | `ROOKERY_DESKTOP_DIR` | Desktop entry directory. Must be writable by you |
 | `ROOKERY_MAN_DIR` | Man page directory. Must be writable by you |
 | `ROOKERY_TEMP_DIR` | Parent of the private per-install download directories (default: the system temp directory, usually `/tmp`) |
@@ -201,6 +200,16 @@ export GITHUB_TOKEN="..."
 `uvx rookery info` shows which paths came from the environment and whether a token was found.
 
 ## Troubleshooting
+
+### My shell says "command not found" after an install
+
+Run `uvx rookery status`. When it warns that the bin directory is missing from `PATH`, add the `export` line it prints to `~/.bashrc` or `~/.zshrc` and open a new shell. With the default bin directory, that line is:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+When the program was installed with `--no-links`, run `uvx rookery link <program>` to create its command.
 
 ### Rookery installed a program, but my shell runs a different one
 
@@ -231,7 +240,7 @@ You can always run the rookery copy explicitly with `~/.local/bin/gdu`.
 
 ### Rookery asked for sudo and I was only installing a normal program
 
-Expected on a fresh machine: the install root does not exist yet and lives under root-owned `/opt`. Rookery creates it once and hands it to you. See [First run and sudo](#first-run-and-sudo) for the cases where sudo is genuinely required every time, and for how to avoid it entirely.
+Expected when `ROOKERY_INSTALL_DIR` points at a root that does not exist yet and that you cannot create yourself, under a root-owned parent such as `/opt`. Rookery creates it once and hands it to you. See [Install location and sudo](#install-location-and-sudo).
 
 If the password is rejected or the prompt times out, the command is safe to rerun.
 
