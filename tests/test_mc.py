@@ -11,9 +11,9 @@ from rookery.operations import (
     MakeExecutable,
 )
 from rookery.programs.mc import (
-    ARCHIVE_URL,
     AistorMcSource,
     McProgram,
+    archive_url,
 )
 from rookery.version import compare_versions
 from tests.conftest import FakeFetcher
@@ -43,7 +43,7 @@ def _install_fake(monkeypatch: pytest.MonkeyPatch, page: str, github: FakeFetche
     """Serve the archive page from memory, and the GitHub fallback from a fake fetcher."""
 
     async def fake_fetch_url_content(self: DirectFetcher, url: str) -> str:
-        assert url == ARCHIVE_URL
+        assert url == archive_url()
         return page
 
     monkeypatch.setattr(DirectFetcher, "fetch_url_content", fake_fetch_url_content)
@@ -103,9 +103,9 @@ async def test_install_operations_download_verify_and_mark_executable() -> None:
 
     download, make_executable = operations
     assert isinstance(download, DownloadFile)
-    assert download.url == f"{ARCHIVE_URL}mc.{OLDER_TAG}"
+    assert download.url == f"{archive_url()}mc.{OLDER_TAG}"
     assert download.dest_path == "mc"
-    assert download.checksum_url == f"{ARCHIVE_URL}mc.{OLDER_TAG}.sha256sum"
+    assert download.checksum_url == f"{archive_url()}mc.{OLDER_TAG}.sha256sum"
     assert isinstance(make_executable, MakeExecutable)
     assert make_executable.file_path == "mc"
 

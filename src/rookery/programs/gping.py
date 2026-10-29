@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import (
     Asset,
     GitHubFetcher,
@@ -18,12 +19,17 @@ from rookery.operations import (
 )
 
 
+# Architecture name in the release asset names
+_TARGETS = {Arch.X86_64: "x86_64", Arch.AARCH64: "arm64"}
+
+
 class GpingProgram(GitHubProgram):
     """gping - Ping, but with a graph."""
 
     # Declarative file locations
     program_name = "gping"
     github_repo = "orf/gping"
+    architectures = frozenset(_TARGETS)
     # gping tags look like "gping-v1.20.1"
     github_tag_templates = ("gping-v{version}", "gping-{version}")
     github_tag_strip_prefixes = ("gping-v", "gping-", "v")
@@ -52,7 +58,7 @@ class GpingProgram(GitHubProgram):
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select Linux x86_64 tarball.
+        Select the Linux tarball for the host architecture.
 
         Parameters
         ----------
@@ -62,10 +68,10 @@ class GpingProgram(GitHubProgram):
         Returns
         -------
         Asset | None
-            Selected asset matching gping-Linux-gnu-x86_64.tar.gz pattern.
+            Selected asset matching the gping-Linux-gnu-<arch>.tar.gz pattern.
         """
         for asset in assets:
-            if "Linux-gnu-x86_64" in asset.name and asset.name.endswith(".tar.gz"):
+            if f"Linux-gnu-{_TARGETS[self.arch]}" in asset.name and asset.name.endswith(".tar.gz"):
                 return asset
         return None
 

@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.cli_helpers import RUN
+from rookery.config import config
 from rookery.fetching import (
     Asset,
     DirectFetcher,
@@ -33,7 +35,10 @@ from rookery.version_sources import (
 # GitHub releases used: binary-bearing releases are tagged "RELEASE.<UTC timestamp>". The
 # timestamp is fixed-width, zero-padded, and big-endian, so lexicographic ordering of
 # these tags matches chronological ordering.
-ARCHIVE_URL = "https://dl.min.io/aistor/mc/release/linux-amd64/archive/"
+# Each architecture has its own archive.
+ARCHIVE_URL_TEMPLATE = "https://dl.min.io/aistor/mc/release/linux-{arch}/archive/"
+# Architecture name in the archive URLs and GitHub asset names
+_TARGETS = {Arch.X86_64: "amd64", Arch.AARCH64: "arm64"}
 # The archive page links each artifact by its filename as both href and link text
 # (e.g. ".../mc.RELEASE.<ts>.sha256sum">mc.RELEASE.<ts>.sha256sum</a>"), with siblings for
 # .sha256sum, .asc, .minisig, and .fips variants alongside the bare binary. Matching the
@@ -48,6 +53,18 @@ ARCHIVE_ENTRY_PATTERN = re.compile(r">mc\.(RELEASE\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2
 GITHUB_REPO = "minio/mc"
 GITHUB_SOURCE = "github-release"
 GITHUB_TAG_TEMPLATES = ("{version}", "RELEASE.{version}")
+
+
+def archive_url() -> str:
+    """
+    Get the AIStor archive URL for the host architecture.
+
+    Returns
+    -------
+    str
+        Directory listing URL, ending in a slash, that holds every archived release.
+    """
+    return ARCHIVE_URL_TEMPLATE.format(arch=_TARGETS[Arch(config.arch)])
 
 
 def _parse_release_timestamp(tag: str) -> datetime | None:
@@ -95,7 +112,7 @@ class AistorMcSource:
             Binary-bearing release tags, newest first.
         """
         async with DirectFetcher() as fetcher:
-            page = await fetcher.fetch_url_content(ARCHIVE_URL)
+            page = await fetcher.fetch_url_content(archive_url())
         tags = {match.group(1) for match in ARCHIVE_ENTRY_PATTERN.finditer(page)}
         return sorted(tags, reverse=True)
 
@@ -124,7 +141,7 @@ class AistorMcSource:
         """
         tags = await self._list_tags()
         if not tags:
-            raise RuntimeError(f"No mc releases found at {ARCHIVE_URL}")
+            raise RuntimeError(f"No mc releases found at {archive_url()}")
         return self._to_available(tags[0])
 
     async def list_versions(
@@ -182,7 +199,7 @@ class AistorMcSource:
         tags = await self._list_tags()
         if requested == "latest":
             if not tags:
-                raise RuntimeError(f"No mc releases found at {ARCHIVE_URL}")
+                raise RuntimeError(f"No mc releases found at {archive_url()}")
             return self._to_resolution(requested, tags[0])
 
         candidates = {requested, f"RELEASE.{requested}"}
@@ -243,7 +260,7 @@ async def _resolve_github_release(requested: str) -> VersionResolution | None:
 
 async def _github_asset_urls(tag: str) -> tuple[str, str | None]:
     """
-    Look up the linux-amd64 binary and checksum asset URLs of a GitHub release.
+    Look up the host architecture's binary and checksum asset URLs of a GitHub release.
 
     Parameters
     ----------
@@ -259,9 +276,9 @@ async def _github_asset_urls(tag: str) -> tuple[str, str | None]:
     Raises
     ------
     ValueError
-        If the release publishes no linux-amd64 binary.
+        If the release publishes no binary for the host architecture.
     """
-    asset_name = f"mc.linux-amd64.{tag}"
+    asset_name = f"mc.linux-{_TARGETS[Arch(config.arch)]}.{tag}"
     checksum: dict[str, str] = {}
 
     def select(assets: list[Asset]) -> Asset | None:
@@ -293,6 +310,7 @@ class McProgram(Program):
     program_name = "mc"
     sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("mc")]
+    architectures = frozenset(_TARGETS)
 
     def __init__(self) -> None:
         """Initialize mc and attach the AIStor version source."""
@@ -344,7 +362,7 @@ class McProgram(Program):
         if resolution is not None and resolution.source == GITHUB_SOURCE:
             asset_url, checksum_url = await _github_asset_urls(resolution.upstream_id)
         else:
-            asset_url = f"{ARCHIVE_URL}mc.{version}"
+            asset_url = f"{archive_url()}mc.{version}"
             checksum_url = f"{asset_url}.sha256sum"
 
         return [

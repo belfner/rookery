@@ -54,9 +54,12 @@ class ImcatProgram(Program):
         Returns
         -------
         Availability
-            ``ok`` is True when make and a C compiler are on PATH; otherwise the reason
-            names the missing tools.
+            ``ok`` is True when the base check passes and make and a C compiler are on
+            PATH; otherwise the reason names what is missing.
         """
+        availability = super().host_availability()
+        if not availability.ok:
+            return availability
         missing = [tool for tool in ("make", "cc") if shutil.which(tool) is None]
         if len(missing) == 0:
             return Availability(ok=True)

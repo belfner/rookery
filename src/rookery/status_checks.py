@@ -17,7 +17,11 @@ from pathlib import Path
 
 from rich.console import RenderableType
 
-from rookery.cli_helpers import shell_path
+from rookery.arch import Arch
+from rookery.cli_helpers import (
+    RUN,
+    shell_path,
+)
 from rookery.config import (
     PathSource,
     config,
@@ -56,6 +60,26 @@ class CheckResult:
     ok: bool
     summary: str
     details: list[RenderableType] = field(default_factory=list)
+
+
+def check_architecture() -> CheckResult:
+    """
+    Report the architecture programs install for.
+
+    Returns
+    -------
+    CheckResult
+        Passes when rookery has prebuilt programs for the architecture.
+    """
+    origin = "ROOKERY_ARCH" if os.getenv("ROOKERY_ARCH") is not None else "detected"
+    if config.arch in Arch:
+        return CheckResult("Architecture", True, f"{config.arch} ({origin})")
+    return CheckResult(
+        "Architecture",
+        False,
+        f"{config.arch} ({origin}), so only programs that run on any architecture install",
+        [f"Prebuilt programs ship for {', '.join(Arch)}; `{RUN} list --all` shows what installs here."],
+    )
 
 
 _ROOT_SUMMARIES: dict[RootState, tuple[bool, str]] = {
@@ -172,6 +196,7 @@ def check_foreign_roots() -> CheckResult:
 
 
 STATUS_CHECKS: tuple[Callable[[], CheckResult], ...] = (
+    check_architecture,
     check_install_root,
     check_bin_dir_on_path,
     check_shadowed_commands,

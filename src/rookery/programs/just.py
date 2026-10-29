@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -11,6 +12,10 @@ from rookery.operations import (
     InstallOperation,
     MakeExecutable,
 )
+
+
+# Rust target triple of the release build per architecture
+_TARGETS = {Arch.X86_64: "x86_64-unknown-linux-musl", Arch.AARCH64: "aarch64-unknown-linux-musl"}
 
 
 class JustProgram(GitHubProgram):
@@ -25,6 +30,7 @@ class JustProgram(GitHubProgram):
 
     program_name = "just"
     github_repo = "casey/just"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("just")]
     man_page_files = {"man1": Path("just.1")}
 
@@ -32,7 +38,7 @@ class JustProgram(GitHubProgram):
         """
         Select the appropriate Linux binary from GitHub release assets.
 
-        Filters for the x86_64 musl variant which has broader compatibility
+        Filters for the host architecture's musl variant, which has broader compatibility
         than the gnu variant across different Linux distributions.
 
         Parameters
@@ -46,7 +52,7 @@ class JustProgram(GitHubProgram):
             The selected musl tarball asset, or None if no match found.
         """
         for asset in assets:
-            if "x86_64-unknown-linux-musl" in asset.name and asset.name.endswith(".tar.gz"):
+            if _TARGETS[self.arch] in asset.name and asset.name.endswith(".tar.gz"):
                 return asset
         return None
 

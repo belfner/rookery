@@ -7,6 +7,7 @@ from pathlib import Path
 
 import niquests
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import (
@@ -23,12 +24,17 @@ from rookery.operations import (
 from rookery.program import LinkCapabilities
 
 
+# Rust target triple of the release build per architecture
+_TARGETS = {Arch.X86_64: "x86_64-unknown-linux-gnu", Arch.AARCH64: "aarch64-unknown-linux-gnu"}
+
+
 class YaziProgram(GitHubProgram):
     """yazi - Blazing fast terminal file manager written in Rust, based on async I/O."""
 
     # Declarative file locations
     program_name = "yazi"
     github_repo = "sxyazi/yazi"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("yazi"), Path("ya")]
     man_page_repo = "yazi-rs/manpages"
     # Exact install also needs the version-matched manpage commit; deferred to v2.
@@ -53,7 +59,7 @@ class YaziProgram(GitHubProgram):
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select x86_64 Linux zip archive.
+        Select the Linux zip archive for the host architecture.
 
         Parameters
         ----------
@@ -63,10 +69,10 @@ class YaziProgram(GitHubProgram):
         Returns
         -------
         Asset | None
-            Selected asset matching x86_64-unknown-linux-gnu.zip pattern.
+            Selected asset matching the <target>.zip pattern.
         """
         for asset in assets:
-            if "x86_64-unknown-linux-gnu" in asset.name and asset.name.endswith(".zip"):
+            if _TARGETS[self.arch] in asset.name and asset.name.endswith(".zip"):
                 return asset
         return None
 

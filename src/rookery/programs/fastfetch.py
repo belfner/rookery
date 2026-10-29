@@ -5,6 +5,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.file_io import atomic_write_text
 from rookery.github_program import GitHubProgram
@@ -18,11 +19,16 @@ from rookery.operations import (
 )
 
 
+# Architecture name in the release asset names
+_TARGETS = {Arch.X86_64: "amd64", Arch.AARCH64: "aarch64"}
+
+
 class Fastfetch(GitHubProgram):
     """fastfetch - Neofetch-like system information tool, plus a get-distro helper."""
 
     program_name = "fastfetch"
     github_repo = "fastfetch-cli/fastfetch"
+    architectures = frozenset(_TARGETS)
     github_tag_templates = ("{version}", "v{version}")
     github_tag_strip_prefixes = ("v",)
     github_canonical_tag_template = "{version}"
@@ -31,7 +37,7 @@ class Fastfetch(GitHubProgram):
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select the Linux x86_64 zip.
+        Select the Linux zip for the host architecture.
 
         Parameters
         ----------
@@ -43,7 +49,7 @@ class Fastfetch(GitHubProgram):
         Asset | None
             The selected asset, or None if no matching asset found.
         """
-        return next((a for a in assets if a.name == "fastfetch-linux-amd64.zip"), None)
+        return next((a for a in assets if a.name == f"fastfetch-linux-{_TARGETS[self.arch]}.zip"), None)
 
     async def get_install_operations(self, version: str) -> list[InstallOperation]:
         """

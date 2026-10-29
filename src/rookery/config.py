@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import os
+import platform
 import sys
 import tempfile
 from enum import Enum
 from pathlib import Path
+
+from rookery.arch import (
+    Arch,
+    normalize_arch,
+)
 
 
 class PathSource(Enum):
@@ -42,6 +48,33 @@ class Config:
         if cache_home is not None and len(cache_home) > 0 and Path(cache_home).is_absolute():
             cache_root = Path(cache_home)
         self.lock_dir = self._get_path_from_env("ROOKERY_LOCK_DIR", (cache_root / "rookery" / "locks").expanduser())
+        self.arch = self._get_arch()
+
+    def _get_arch(self) -> str:
+        """
+        Get the CPU architecture programs are installed for.
+
+        ROOKERY_ARCH overrides the host's ``platform.machine()``; both accept the
+        amd64 and arm64 aliases.
+
+        Returns
+        -------
+        str
+            ``uname -m`` style name. A detected name may lie outside :class:`Arch`, which
+            leaves only programs that run on any architecture installable.
+
+        Raises
+        ------
+        ValueError
+            If ROOKERY_ARCH names an architecture outside :class:`Arch`.
+        """
+        env_value = os.getenv("ROOKERY_ARCH")
+        if env_value is None:
+            return normalize_arch(platform.machine())
+        arch = normalize_arch(env_value)
+        if arch not in Arch:
+            raise ValueError(f"ROOKERY_ARCH must be one of {', '.join(Arch)}, got: {env_value}")
+        return arch
 
     def _get_path_from_env(self, env_var: str, default: Path) -> Path:
         """
@@ -130,7 +163,5 @@ class Config:
 try:
     config = Config()
 except ValueError as e:
-    print(f"\nConfiguration Error: {e}", file=sys.stderr)
-    print("\nEnvironment variables must be absolute paths.", file=sys.stderr)
-    print("Example: ROOKERY_INSTALL_DIR=$HOME/.local/share/rookery-programs\n", file=sys.stderr)
+    print(f"\nConfiguration Error: {e}\n", file=sys.stderr)
     sys.exit(1)

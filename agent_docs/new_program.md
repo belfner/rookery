@@ -6,6 +6,7 @@
 ```python
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.config import config
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -18,9 +19,14 @@ from rookery.operations import (
 from rookery.program import LinkCapabilities
 
 
+# Architecture name in the release asset names
+_TARGETS = {Arch.X86_64: "x86_64", Arch.AARCH64: "aarch64"}
+
+
 class MyProgram(GitHubProgram):
     program_name = "myprogram"
     github_repo = "owner/repo"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("bin/myprogram")]
     man_page_files = {"man1": Path("share/man/man1/myprogram.1")}
 
@@ -28,7 +34,7 @@ class MyProgram(GitHubProgram):
         asset_url = await get_github_asset_url(
             self.github_repo,
             version,
-            lambda assets: next((a for a in assets if "linux-x86_64" in a.name), None),
+            lambda assets: next((a for a in assets if f"linux-{_TARGETS[self.arch]}" in a.name), None),
         )
         return [
             DownloadArchive("archive", asset_url),
@@ -113,11 +119,17 @@ returns when the program has binaries.
 
 `install --default` installs the uninstalled programs whose `default_install` class attribute is True, which `Program` sets for every program. A program that belongs in the catalog but outside the default set declares `default_install = False`; `install --all` still installs it, and `list --all` leaves its Default cell blank.
 
+## Architectures
+
+A program that downloads prebuilt binaries declares `architectures`, the `Arch` members it has builds for, and picks its asset with `self.arch`, the architecture being installed for (the host's, or `ROOKERY_ARCH`). Projects spell architectures differently (`x86_64`/`aarch64` in Rust target triples, `amd64`/`arm64` in Go and Debian names, mixtures elsewhere), so keep a module-level map from `Arch` to the project's spelling and derive `architectures = frozenset(_TARGETS)` from it, as above; the map also covers any architecture-named path inside the archive. A program built only for x86_64 declares `architectures = frozenset({Arch.X86_64})`. Scripts and source builds leave `architectures` at its default, `None`, which means any architecture.
+
+The declaration is static, so `list --all` shows it in the Arch column without fetching release metadata.
+
 ## Host Availability
 
-`Program.host_availability()` returns an `Availability(ok, reason)` describing whether this host has the tools the installer will run. The default answers `ok=True`. A subclass whose install operations shell out to a system tool overrides it with a `shutil.which` probe and phrases `reason` as a fragment that follows the program name, for example `installs through apt, which is missing on this host (apt-get)`. `DebProgram` does this for the apt and dpkg commands.
+`Program.host_availability()` returns an `Availability(ok, reason)` describing whether the program has a build for this host's architecture and the host has the tools the installer will run. The default checks `architectures` and answers `ok=False` with `has no build for <arch>` when the install architecture lies outside `architectures`. A subclass whose install operations shell out to a system tool overrides it, returns the `super().host_availability()` result when that is not ok, and otherwise adds a `shutil.which` probe, phrasing `reason` as a fragment that follows the program name, for example `installs through apt, which is missing on this host (apt-get)`. `DebProgram` does this for the apt and dpkg commands.
 
-Commands consult it before any privilege prompt or download: `install --all`, `install --default`, and `update` skip an unavailable program with a yellow `Skipped name: reason` line, `install name` and `update name` exit 1 with the reason, and `list --all` shows it as `Unavailable`.
+Commands consult it before any privilege prompt or download: `install --all`, `install --default`, and `update` skip an unavailable program with a yellow `Skipped name: reason` line, `install name` and `update name` exit 1 with the reason, and `list --all` shows it as `Unavailable` with the reason beneath the table.
 
 ## Version Management (list / exact-install / pin)
 

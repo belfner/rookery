@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -15,17 +16,22 @@ from rookery.operations import (
 )
 
 
+# Rust target triple of the release build per architecture
+_TARGETS = {Arch.X86_64: "x86_64-unknown-linux-gnu", Arch.AARCH64: "aarch64-unknown-linux-gnu"}
+
+
 class Hyperfine(GitHubProgram):
     """hyperfine - Fast command-line benchmarking tool."""
 
     program_name = "hyperfine"
     github_repo = "sharkdp/hyperfine"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("hyperfine")]
     man_page_files = {"man1": Path("hyperfine.1")}
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select the appropriate asset for Linux x86_64 (glibc variant).
+        Select the Linux glibc tarball for the host architecture.
 
         Parameters
         ----------
@@ -38,7 +44,7 @@ class Hyperfine(GitHubProgram):
             The selected asset, or None if no matching asset found.
         """
         return next(
-            (a for a in assets if "x86_64-unknown-linux-gnu" in a.name and a.name.endswith(".tar.gz")),
+            (a for a in assets if _TARGETS[self.arch] in a.name and a.name.endswith(".tar.gz")),
             None,
         )
 

@@ -2,7 +2,7 @@
 
 Package manager for third-party dev tools on Linux. Installs, updates, and wires up symlinks, man pages, and desktop entries so you don't have to.
 
-Requires [uv](https://docs.astral.sh/uv/). Rookery needs Python 3.12+, which uv normally provisions for you. The program catalog currently targets Linux x86-64.
+Requires [uv](https://docs.astral.sh/uv/). Rookery needs Python 3.12+, which uv normally provisions for you. The program catalog targets Linux on x86_64 and aarch64.
 
 ## Quick start
 
@@ -95,34 +95,36 @@ Commands that create or remove links (`install`, `update`, `uninstall`, `link`, 
 
 ## Supported Programs
 
-| Program | Type | Description |
-|---------|------|-------------|
-| bat | GitHub binary | `cat` clone with syntax highlighting |
-| blender | Standalone | 3D creation suite |
-| clip | Python script | Copy text, files, paths, and command output to the clipboard, with an OSC 52 fallback over SSH |
-| cuda-run | Shell script | Run a command in a throwaway uv environment with a PyPI CUDA toolkit |
-| drawio | GitHub AppImage | Diagram editor |
-| dust | GitHub binary | Intuitive `du` alternative |
-| dysk | GitHub binary | Filesystem information tool |
-| eza | GitHub binary | Modern `ls` replacement |
-| fastfetch | GitHub binary | System information tool, plus a `get-distro` helper that prints the OS name (needs `jq`) |
-| fasttarutils | Python script | Multi-format tar, 7z, and zip compression/extraction (ftar/funtar) with parallel backends |
-| gdu | GitHub binary | Disk usage analyzer |
-| gping | GitHub binary | Ping with a graph |
-| helm | Standalone | Kubernetes package manager |
-| hyperfine | GitHub binary | Command-line benchmarking tool |
-| imcat | GitHub source | 24-bit terminal image viewer, compiled from source |
-| just | GitHub binary | Command runner |
-| kpod | Shell script | `kubectl` wrappers that resolve a pod by name prefix |
-| mc | Standalone | MinIO Client for S3-compatible object storage |
-| meetrec | Python script | Record meeting audio as separate system and microphone Opus tracks plus a mix, via ffmpeg, with an idle warning and auto-stop |
-| netron | GitHub .deb | Neural network model viewer |
-| nvim | GitHub binary | Hyperextensible Vim-based editor |
-| storageexplorer | GitHub binary | Azure Storage Explorer |
-| tarssh | Shell script | Stream a directory/file over SSH via tar pipe |
-| yazi | GitHub binary | Terminal file manager |
+Rookery installs the build matching the host architecture, x86_64 or aarch64, as `uname -m` reports it; `ROOKERY_ARCH` overrides the detection. On an architecture outside its Arch cell, a program shows as Unavailable in `uvx rookery list --all`, with the reason beneath the table, and bulk installs skip it. Programs marked "any" are scripts or source builds that run on every architecture.
 
-"Type" describes where the program comes from upstream. Binary selectors currently target Linux x86-64.
+| Program | Type | Arch | Description |
+|---------|------|------|-------------|
+| bat | GitHub binary | x86_64, aarch64 | `cat` clone with syntax highlighting |
+| blender | Standalone | x86_64 | 3D creation suite |
+| clip | Python script | any | Copy text, files, paths, and command output to the clipboard, with an OSC 52 fallback over SSH |
+| cuda-run | Shell script | any | Run a command in a throwaway uv environment with a PyPI CUDA toolkit |
+| drawio | GitHub AppImage | x86_64, aarch64 | Diagram editor |
+| dust | GitHub binary | x86_64, aarch64 | Intuitive `du` alternative |
+| dysk | GitHub binary | x86_64, aarch64 | Filesystem information tool |
+| eza | GitHub binary | x86_64, aarch64 | Modern `ls` replacement |
+| fastfetch | GitHub binary | x86_64, aarch64 | System information tool, plus a `get-distro` helper that prints the OS name (needs `jq`) |
+| fasttarutils | Python script | any | Multi-format tar, 7z, and zip compression/extraction (ftar/funtar) with parallel backends |
+| gdu | GitHub binary | x86_64, aarch64 | Disk usage analyzer |
+| gping | GitHub binary | x86_64, aarch64 | Ping with a graph |
+| helm | Standalone | x86_64, aarch64 | Kubernetes package manager |
+| hyperfine | GitHub binary | x86_64, aarch64 | Command-line benchmarking tool |
+| imcat | GitHub source | any | 24-bit terminal image viewer, compiled from source |
+| just | GitHub binary | x86_64, aarch64 | Command runner |
+| kpod | Shell script | any | `kubectl` wrappers that resolve a pod by name prefix |
+| mc | Standalone | x86_64, aarch64 | MinIO Client for S3-compatible object storage |
+| meetrec | Python script | any | Record meeting audio as separate system and microphone Opus tracks plus a mix, via ffmpeg, with an idle warning and auto-stop |
+| netron | GitHub .deb | x86_64 | Neural network model viewer |
+| nvim | GitHub binary | x86_64, aarch64 | Hyperextensible Vim-based editor |
+| storageexplorer | GitHub binary | x86_64 | Azure Storage Explorer |
+| tarssh | Shell script | any | Stream a directory/file over SSH via tar pipe |
+| yazi | GitHub binary | x86_64, aarch64 | Terminal file manager |
+
+"Type" describes where the program comes from upstream.
 
 ## Usage
 
@@ -130,9 +132,9 @@ Inspect what is installed:
 
 ```bash
 uvx rookery list                # Installed programs, versions, pin and link status
-uvx rookery list --all          # Adds every other program in the catalog as Available, plus a Default column
+uvx rookery list --all          # Adds every other program in the catalog as Available, plus Default and Arch columns
 uvx rookery info                # Configuration, paths, and stats
-uvx rookery status              # Health checks: install root, PATH, shadowed commands, links into other install roots (exit 1 on any warning)
+uvx rookery status              # Health checks: architecture, install root, PATH, shadowed commands, links into other install roots (exit 1 on any warning)
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```
 
@@ -184,6 +186,7 @@ A pin holds a program at its pinned version: `rookery update` skips pinned progr
 | `ROOKERY_MAN_DIR` | Man page directory. Must be writable by you |
 | `ROOKERY_TEMP_DIR` | Parent of the private per-install download directories (default: the system temp directory, usually `/tmp`) |
 | `ROOKERY_MAX_PARALLEL` | Concurrency limit for batch installs and updates (default: 10) |
+| `ROOKERY_ARCH` | Architecture to install builds for: `x86_64` or `aarch64`, also accepting `amd64` and `arm64` (default: detected from the host) |
 | `GITHUB_TOKEN` / `GH_TOKEN` | GitHub API token, lifting the anonymous 60 requests/hour limit |
 
 Rookery reads these on every invocation, so put any setting you want to keep in your shell startup rather than passing it to a single command.

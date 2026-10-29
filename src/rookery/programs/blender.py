@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.config import config
 from rookery.fetching import DirectFetcher
 from rookery.operations import (
@@ -24,6 +25,7 @@ class BlenderProgram(Program):
 
     # Declarative file locations
     program_name = "blender"
+    architectures = frozenset({Arch.X86_64})  # Upstream publishes Linux builds for x86_64
     sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("blender/blender")]
 

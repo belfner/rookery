@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from rookery.appimage_program import AppImageProgram
+from rookery.arch import Arch
 from rookery.config import config
 from rookery.fetching import Asset
 from rookery.github_utils import get_github_asset_url
@@ -16,12 +17,17 @@ from rookery.operations import (
 from rookery.program import LinkCapabilities
 
 
+# Architecture name in the release asset names
+_TARGETS = {Arch.X86_64: "x86_64", Arch.AARCH64: "arm64"}
+
+
 class DrawioProgram(AppImageProgram):
     """draw.io - Professional diagramming application."""
 
     # Declarative file locations
     program_name = "drawio"
     github_repo = "jgraph/drawio-desktop"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("drawio")]
 
     @property
@@ -43,7 +49,7 @@ class DrawioProgram(AppImageProgram):
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select x86_64 AppImage.
+        Select the AppImage for the host architecture.
 
         Parameters
         ----------
@@ -53,10 +59,10 @@ class DrawioProgram(AppImageProgram):
         Returns
         -------
         Asset | None
-            Selected asset matching drawio-x86_64-*.AppImage pattern.
+            Selected asset matching the drawio-<arch>-*.AppImage pattern.
         """
         for asset in assets:
-            if "drawio-x86_64" in asset.name and asset.name.endswith(".AppImage"):
+            if f"drawio-{_TARGETS[self.arch]}" in asset.name and asset.name.endswith(".AppImage"):
                 return asset
         return None
 

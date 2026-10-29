@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -15,12 +16,17 @@ from rookery.operations import (
 )
 
 
+# Directory of the release zip, named by Rust target triple, holding each architecture's build
+_TARGETS = {Arch.X86_64: "x86_64-unknown-linux-gnu", Arch.AARCH64: "aarch64-unknown-linux-gnu"}
+
+
 class DyskProgram(GitHubProgram):
     """dysk - Get information on your mounted disks with custom version handling."""
 
     # Declarative file locations
     program_name = "dysk"
     github_repo = "Canop/dysk"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("dysk")]
     man_page_files = {"man1": Path("dysk.1")}
 
@@ -71,7 +77,7 @@ class DyskProgram(GitHubProgram):
             ExtractFiles(
                 "dysk",
                 {
-                    "*x86_64-unknown-linux-gnu/dysk": "dysk",
+                    f"*{_TARGETS[self.arch]}/dysk": "dysk",
                     "*man/dysk.1": "dysk.1",
                 },
             ),

@@ -24,6 +24,7 @@ from rich.progress import (
 from rich.table import Table
 
 from rookery import __version__
+from rookery.arch import Arch
 from rookery.cli_helpers import (
     RUN,
     check_and_warn_path,
@@ -362,7 +363,8 @@ def list_command(
     Displays a table with program name, current version, installation status,
     and link status. Shows programs that are currently installed; use --all to
     also list every other registered program as available to install, with a
-    Default column marking the members of the `install --default` set.
+    Default column marking the members of the `install --default` set and an Arch
+    column naming the architectures each program has builds for.
     """
     programs = sorted(list_programs(), key=lambda p: p.name)
     installed = [p for p in programs if p.version_file.exists()]
@@ -389,7 +391,10 @@ def list_command(
     table.add_column("Links", style="blue")
     if all_flag:
         table.add_column("Default", style="cyan")
+        table.add_column("Arch")
 
+    # Why each unavailable program cannot install, printed beneath the table
+    unavailable: list[str] = []
     for prog in rows:
         pin = get_pin(prog)
         pin_display = pin.version if pin is not None else ""
@@ -398,19 +403,25 @@ def list_command(
         if prog.version_file.exists():
             current = prog.read_version_file()
             status = "Installed"
-        elif prog.host_availability().ok:
-            current = "[dim]—[/dim]"
-            status = "[dim]Available[/dim]"
         else:
             current = "[dim]—[/dim]"
-            status = "[dim]Unavailable[/dim]"
+            availability = prog.host_availability()
+            if availability.ok:
+                status = "[dim]Available[/dim]"
+            else:
+                status = "[dim]Unavailable[/dim]"
+                unavailable.append(f"{prog.name} {availability.reason}")
 
         cells = [prog.name, current, status, pin_display, f"[{link_style}]{link_display}[/]"]
         if all_flag:
             cells.append("yes" if prog.default_install else "")
+            archs = prog.architectures
+            cells.append("any" if archs is None else ", ".join(arch for arch in Arch if arch in archs))
         table.add_row(*cells)
 
     console.print(table)
+    for line in unavailable:
+        console.print(f"[dim]Unavailable: {line}[/]")
 
 
 @app.command(name="install")
@@ -1117,7 +1128,7 @@ def info_command() -> None:
     Display configuration and system information.
 
     Shows all configured paths, their sources (environment variable or default),
-    tool version, Python version, and installation statistics.
+    tool version, Python version, target architecture, and installation statistics.
     """
     console.print("\n[bold cyan]Rookery Configuration[/bold cyan]\n")
 
@@ -1125,6 +1136,8 @@ def info_command() -> None:
     console.print("[bold]Tool Information:[/bold]")
     console.print(f"  Version: {__version__}")
     console.print(f"  Python: {sys.version.split()[0]}")
+    arch_source = "[yellow]ROOKERY_ARCH[/yellow]" if os.getenv("ROOKERY_ARCH") is not None else "[dim]detected[/dim]"
+    console.print(f"  Architecture: {config.arch} ({arch_source})")
 
     # GitHub Configuration
     github_token = os.environ.get("GITHUB_TOKEN")

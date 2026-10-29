@@ -6,6 +6,7 @@ from collections.abc import Callable
 
 import niquests
 
+from rookery.config import config
 from rookery.fetching import (
     Asset,
     GitHubFetcher,
@@ -164,5 +165,5 @@ async def get_github_asset_url(
         release = await _resolve_release_for_install(fetcher, github_repo, version, tag_candidates)
         asset = asset_selector(release.assets)
         if asset is None:
-            raise ValueError(f"No matching asset found for {github_repo} {version}")
+            raise ValueError(f"No matching asset found for {github_repo} {version} on {config.arch}")
         return asset.download_url

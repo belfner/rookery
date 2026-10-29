@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -21,6 +22,7 @@ class StorageExplorerProgram(GitHubProgram):
 
     # Declarative file locations
     program_name = "storageexplorer"
+    architectures = frozenset({Arch.X86_64})  # Upstream publishes Linux builds for x86_64
     sudo_requirement = SudoRequirement.NOT_REQUIRED
     binary_files = [Path("StorageExplorer/StorageExplorer")]
 

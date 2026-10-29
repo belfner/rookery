@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from rookery.arch import Arch
 from rookery.config import config
 from rookery.file_io import (
     atomic_write_text,
@@ -80,7 +81,8 @@ class Availability:
     Attributes
     ----------
     ok : bool
-        True when every tool the installer runs is present on this host.
+        True when the program has a build for this host's architecture and every tool
+        the installer runs is present on this host.
     reason : str
         One sentence fragment explaining a False ``ok``, phrased to follow the program
         name: "installs through apt, which is missing on this host".
@@ -127,6 +129,9 @@ class Program(ABC):
     default_install : bool
         Membership in the default set that `install --default` installs.
         True for every program unless a subclass sets it to False.
+    architectures : frozenset[Arch] | None
+        CPU architectures the program has builds for. None for programs that run on
+        any architecture, such as scripts and source builds.
     """
 
     # Declarative attributes - override in subclasses
@@ -136,6 +141,7 @@ class Program(ABC):
     man_page_files: dict[str, Path] = {}
     desktop_entry_config: dict[str, str] | None = None
     default_install: bool = True
+    architectures: frozenset[Arch] | None = None
 
     # Version source for listing/resolving versions. None means legacy (latest-only) behavior.
     version_source: VersionSource | None = None
@@ -179,19 +185,27 @@ class Program(ABC):
             desktop=self.desktop_entry_config is not None,
         )
 
+    @property
+    def arch(self) -> Arch:
+        """The architecture to install for, which selects the program's build."""
+        return Arch(config.arch)
+
     def host_availability(self) -> Availability:
         """
-        Check whether this host has the tools the installer will run.
+        Check whether the program has a build for this host and the host has the tools the installer will run.
 
         Evaluated before any privilege prompt or download, so commands can drop a
         program that cannot install here and explain why. Subclasses whose installer
-        shells out to a system tool override this to probe for it.
+        shells out to a system tool override this to probe for it, starting from the
+        result of this base check.
 
         Returns
         -------
         Availability
             ``ok`` is True when installation can proceed on this host.
         """
+        if self.architectures is not None and config.arch not in self.architectures:
+            return Availability(ok=False, reason=f"has no build for {config.arch}")
         return Availability(ok=True)
 
     def _ensure_install_dir(self) -> None:

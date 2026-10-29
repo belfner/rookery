@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from rookery.arch import Arch
 from rookery.deb_program import DebProgram
 from rookery.fetching import Asset
 from rookery.github_utils import get_github_asset_url
@@ -16,6 +17,7 @@ class NetronProgram(DebProgram):
     """Netron - Visualizer for neural network, deep learning, and machine learning models."""
 
     program_name = "netron"
+    architectures = frozenset({Arch.X86_64})  # Upstream publishes Linux builds for x86_64
     github_repo = "lutzroeder/netron"
     deb_package_name = "netron"
 

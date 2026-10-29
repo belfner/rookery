@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from rookery.arch import Arch
 from rookery.fetching import Asset
 from rookery.github_program import GitHubProgram
 from rookery.github_utils import get_github_asset_url
@@ -15,12 +16,17 @@ from rookery.operations import (
 )
 
 
+# Rust target triple of the release build per architecture
+_TARGETS = {Arch.X86_64: "x86_64-unknown-linux-gnu", Arch.AARCH64: "aarch64-unknown-linux-gnu"}
+
+
 class EzaProgram(GitHubProgram):
     """eza - A modern, maintained replacement for ls."""
 
     # Declarative file locations
     program_name = "eza"
     github_repo = "eza-community/eza"
+    architectures = frozenset(_TARGETS)
     binary_files = [Path("eza")]
     man_page_files = {
         "man1": Path("target/man/eza.1"),
@@ -29,7 +35,7 @@ class EzaProgram(GitHubProgram):
 
     def _select_asset(self, assets: list[Asset]) -> Asset | None:
         """
-        Select x86_64 Linux tarball.
+        Select the Linux tarball for the host architecture.
 
         Parameters
         ----------
@@ -39,10 +45,10 @@ class EzaProgram(GitHubProgram):
         Returns
         -------
         Asset | None
-            Selected asset matching eza_x86_64-unknown-linux-gnu.tar.gz pattern.
+            Selected asset named eza_<target>.tar.gz, which excludes the no_libgit variant.
         """
         for asset in assets:
-            if "eza_x86_64-unknown-linux-gnu" in asset.name and asset.name.endswith(".tar.gz"):
+            if asset.name == f"eza_{_TARGETS[self.arch]}.tar.gz":
                 return asset
         return None
 
