@@ -132,7 +132,7 @@ Inspect what is installed:
 uvx rookery list                # Installed programs, versions, pin and link status
 uvx rookery list --all          # Adds every other program in the catalog as Available, plus a Default column
 uvx rookery info                # Configuration, paths, and stats
-uvx rookery status              # Health checks: install root, PATH, links into other install roots (exit 1 on any warning)
+uvx rookery status              # Health checks: install root, PATH, shadowed commands, links into other install roots (exit 1 on any warning)
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```
 
@@ -222,7 +222,7 @@ $ which gdu
 /usr/bin/gdu          # the distro copy wins
 ```
 
-Diagnose with `type -a`, which shows every candidate plus any alias or shell function:
+`uvx rookery status` lists the commands linked from the current install root that an earlier `PATH` entry shadows. For a single command, `type -a` shows every candidate plus any alias or shell function:
 
 ```bash
 type -a gdu

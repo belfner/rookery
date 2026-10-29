@@ -6,11 +6,14 @@ Each check is a function that inspects the current configuration and returns a
 
 from __future__ import annotations
 
+import os
+import shutil
 from collections.abc import Callable
 from dataclasses import (
     dataclass,
     field,
 )
+from pathlib import Path
 
 from rich.console import RenderableType
 
@@ -109,6 +112,44 @@ def check_bin_dir_on_path() -> CheckResult:
     )
 
 
+def check_shadowed_commands() -> CheckResult:
+    """
+    Report linked commands that PATH resolves to a different executable.
+
+    A command counts as linked when its link in the bin directory resolves to an
+    executable in the install root. Commands PATH cannot find at all are left to the
+    PATH check.
+
+    Returns
+    -------
+    CheckResult
+        Passes when PATH finds every linked command through its link.
+    """
+    own_root = config.install_dir.resolve()
+    shadowed: list[str] = []
+    try:
+        links = sorted(entry for entry in config.bin_dir.iterdir() if entry.is_symlink())
+    except OSError:
+        links = []
+    for link in links:
+        try:
+            target = link.resolve()
+            found = shutil.which(link.name)
+            linked = own_root in target.parents and os.access(target, os.X_OK)
+            if linked and found is not None and not Path(found).samefile(target):
+                shadowed.append(f"{link.name} -> {found}")
+        except (OSError, RuntimeError):
+            continue
+    if len(shadowed) == 0:
+        return CheckResult("Command lookup", True, "linked commands resolve through the bin directory")
+    return CheckResult(
+        "Command lookup",
+        False,
+        f"{len(shadowed)} linked command(s) are shadowed by an earlier PATH entry",
+        [*shadowed, f"Move {shell_path(config.bin_dir)} ahead of these directories in PATH."],
+    )
+
+
 def check_foreign_roots() -> CheckResult:
     """
     Report commands in the bin directory that point into another rookery install root.
@@ -133,5 +174,6 @@ def check_foreign_roots() -> CheckResult:
 STATUS_CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_install_root,
     check_bin_dir_on_path,
+    check_shadowed_commands,
     check_foreign_roots,
 )
