@@ -112,10 +112,16 @@ async def install_program(
     try:
         resolution = await program.resolve_version(requested)
 
-        # Use unified install function with the resolved version identity active
-        await install_or_update_program(
-            program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
-        )
+        # Taking the lock recovers an interrupted install, which can turn a program that
+        # looked uninstalled when it was chosen into an installed (and possibly pinned) one
+        async with program_state_lock_async(program):
+            if program.version_file.exists():
+                console.print(f"[yellow]Skipped {program.name}: already installed[/]")
+                return (False, False, "")
+            # Use unified install function with the resolved version identity active
+            await install_or_update_program(
+                program, resolution.version, console, sudo_mgr, create_links, resolution=resolution
+            )
 
         if not batch:
             console.print(f"[green]✓ Installed {program.name} [blue]{resolution.version}[/][/]")

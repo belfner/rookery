@@ -87,7 +87,7 @@ Linked commands run from the bin directory (`~/.local/bin` by default), so it ha
 
 ### Programs in another install root
 
-Rookery manages the programs under the current install root. Programs installed under a different root keep working through their links, but `list`, `update`, and `uninstall` see only the current root. `uvx rookery status` reports commands in the bin directory that point into another rookery root.
+Rookery manages the programs under the current install root. Programs installed under a different root keep working through their links, but `list`, `update`, and `uninstall` see only the current root. `uvx rookery info` reports commands in the bin directory that point into another rookery root.
 
 Commands that create or remove links (`install`, `update`, `uninstall`, `link`, `unlink`, `pin --install`) show the same report and ask for an explicit `y` before continuing. Pass `--allow-foreign-root` to continue after the report without the prompt, for example in scripts. Without a terminal to answer the prompt, the command exits with status 1 and names the flag. The bin directory is shared by every root, so installing or linking one of those programs here repoints its command at the copy in the current root. To manage the other root's programs, set `ROOKERY_INSTALL_DIR` to that root. Commands run with `--no-links`, and commands that touch system-package programs alone, skip the confirmation.
 
@@ -135,8 +135,7 @@ Inspect what is installed:
 ```bash
 uvx rookery list                # Installed programs, versions, pin and link status
 uvx rookery list --all          # Adds every other program in the catalog as Available, plus Default and Arch columns
-uvx rookery info                # Configuration, paths, and stats
-uvx rookery status              # Health checks: architecture, install root, PATH, shadowed commands, links into other install roots (exit 1 on any warning)
+uvx rookery info                # Health checks (architecture, install root, PATH, shadowed commands, links into other install roots), configuration, and pinned programs; exit 1 on any warning
 uvx rookery versions nvim       # Available versions (--all, --include-prerelease, --json)
 ```
 
@@ -176,7 +175,9 @@ uvx rookery unpin nvim                 # Remove the pin
 uvx rookery pins                       # List pinned programs (--json)
 ```
 
-A pin holds a program at its pinned version: `rookery update` skips pinned programs and reports them. Use `rookery unpin`, or `rookery install <prog>@<version> --pin`, to move a pinned program. `rookery versions` and `rookery install <prog>@<version>` work for GitHub-release programs; programs with a single bundled version (shell scripts) and a few composite sources install the latest only.
+A pin holds a program at its pinned version: `rookery update` skips pinned programs and reports them. Use `rookery unpin`, or `rookery install <prog>@<version> --pin`, to move a pinned program. `rookery versions` and `rookery install <prog>@<version>` work for GitHub-release programs; programs with a single bundled version (shell scripts) and a few composite sources install the latest only. Each program's listing reaches back to the oldest release rookery's install recipe handles on your architecture, which `rookery versions` prints beneath the table; `install` refuses an older version before downloading anything.
+
+For programs rookery unpacks itself, an install or update builds the new version beside the current one and swaps it in once every step has succeeded, so a failed install leaves the previous version in place and working.
 
 ## Configuration
 
@@ -208,7 +209,7 @@ export GITHUB_TOKEN="..."
 
 ### My shell says "command not found" after an install
 
-Run `uvx rookery status`. When it warns that the bin directory is missing from `PATH`, add the `export` line it prints to `~/.bashrc` or `~/.zshrc` and open a new shell. With the default bin directory, that line is:
+Run `uvx rookery info`. When it warns that the bin directory is missing from `PATH`, add the `export` line it prints to `~/.bashrc` or `~/.zshrc` and open a new shell. With the default bin directory, that line is:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -227,7 +228,7 @@ $ which gdu
 /usr/bin/gdu          # the distro copy wins
 ```
 
-`uvx rookery status` lists the commands linked from the current install root that an earlier `PATH` entry shadows. For a single command, `type -a` shows every candidate plus any alias or shell function:
+`uvx rookery info` lists the commands linked from the current install root that an earlier `PATH` entry shadows. For a single command, `type -a` shows every candidate plus any alias or shell function:
 
 ```bash
 type -a gdu
@@ -287,6 +288,8 @@ make check          # lint, format check, typecheck, tests
 docker run --privileged --rm tonistiigi/binfmt --install arm64   # on an x86_64 host
 docker run --privileged --rm tonistiigi/binfmt --install amd64   # on an aarch64 host
 ```
+
+`make verify-oldest-versions` re-derives `src/rookery/oldest_versions.json`, the oldest release each recipe installs per architecture, by binary-searching each program's releases with real installs into throwaway roots. Both architectures run on one host, since an install unpacks a release without running it. Set `GH_TOKEN` first; a full run makes about 140 installs.
 
 ## Adding a Program
 

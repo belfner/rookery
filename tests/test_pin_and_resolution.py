@@ -35,10 +35,9 @@ def _installed_state(version: str = "1.0.0") -> ProgramState:
 def test_pin_installed_version(dummy_program: DummyProgram) -> None:
     dummy_program.write_state(_installed_state("1.0.0"))
 
-    pin = pin_installed_version(dummy_program, reason="hold it")
+    pin = pin_installed_version(dummy_program)
     assert pin.version == "1.0.0"
     assert pin.upstream_id == "v1.0.0"
-    assert pin.reason == "hold it"
 
     assert get_pin(dummy_program) is not None
     assert dummy_program.read_state().is_pinned is True

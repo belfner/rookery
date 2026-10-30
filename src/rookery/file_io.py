@@ -268,41 +268,6 @@ def discard_path(path: str | Path) -> None:
             target.unlink(missing_ok=True)
 
 
-def sweep_temp_files(directory: str | Path) -> list[Path]:
-    """
-    Reclaim the temporaries an interrupted write left behind under a directory.
-
-    A write killed between creating its temporary and renaming it leaves a dot-prefixed
-    entry that belongs to nothing. Sweeping before a fresh write keeps those from
-    accumulating across updates.
-
-    Parameters
-    ----------
-    directory : str | Path
-        Directory to walk.
-
-    Returns
-    -------
-    list[Path]
-        The paths removed.
-    """
-    root = Path(directory)
-    if not root.is_dir():
-        return []
-
-    # The walk is materialised before anything is removed, so discarding a temporary
-    # directory cannot disturb an in-flight traversal of its children.
-    candidates = [entry for entry in list(root.rglob(".*")) if is_temp_name(entry.name)]
-
-    removed = []
-    for entry in candidates:
-        if not entry.is_symlink() and not entry.exists():
-            continue
-        discard_path(entry)
-        removed.append(entry)
-    return removed
-
-
 def is_temp_name(name: str) -> bool:
     """
     Report whether a filename is a temporary left behind by a write in this module.

@@ -35,7 +35,7 @@ def get_pin(program: Program) -> PinState | None:
     return None
 
 
-def pin_installed_version(program: Program, reason: str | None = None) -> PinState:
+def pin_installed_version(program: Program) -> PinState:
     """
     Pin the currently installed version (brew semantics).
 
@@ -43,8 +43,6 @@ def pin_installed_version(program: Program, reason: str | None = None) -> PinSta
     ----------
     program : Program
         Program to pin.
-    reason : str | None
-        Optional reason for the pin, by default None.
 
     Returns
     -------
@@ -69,7 +67,6 @@ def pin_installed_version(program: Program, reason: str | None = None) -> PinSta
             upstream_id=state.installed.upstream_id,
             source=state.installed.source,
             pinned_at=utc_now_iso(),
-            reason=reason,
         )
 
     pin = program.mutate_state(apply).pin

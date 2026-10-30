@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from rookery.program import Program
+from rookery.version import compare_versions
 
 
 @dataclass
@@ -49,6 +50,9 @@ async def collect_versions(
     """
     Collect available versions annotated with installed/pinned/latest status.
 
+    Versions older than the oldest one the program's recipe installs are left out, apart
+    from an installed or pinned version.
+
     Parameters
     ----------
     program : Program
@@ -70,7 +74,11 @@ async def collect_versions(
     pinned_version = state.pin.version if (state.pin is not None and state.pin.enabled) else None
 
     rows: list[VersionRow] = []
+    oldest = program.oldest_supported_version()
     for index, entry in enumerate(available):
+        supported = oldest is None or compare_versions(entry.version, oldest) >= 0
+        if not supported and entry.version not in (installed_version, pinned_version):
+            continue
         released_at = entry.released_at.strftime("%Y-%m-%d") if entry.released_at is not None else ""
         rows.append(
             VersionRow(

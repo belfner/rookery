@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import functools
+import json
 import shutil
 import tempfile
 from abc import (
@@ -17,7 +19,9 @@ from rookery.arch import Arch
 from rookery.config import config
 from rookery.file_io import (
     atomic_write_text,
-    sweep_temp_files,
+    discard_path,
+    is_temp_name,
+    temp_name_for,
 )
 from rookery.install_resolution import get_active_resolution
 from rookery.installer import Installer
@@ -29,7 +33,9 @@ from rookery.state import (
     InstalledState,
     ProgramState,
     mutate_program_state,
+    program_state_lock_async,
     read_program_state,
+    state_path_for,
     utc_now_iso,
     write_program_state_atomic,
 )
@@ -44,6 +50,16 @@ from rookery.version_sources import (
 
 if TYPE_CHECKING:
     from rookery.link_status import LinkStatus
+
+# Oldest release each recipe installs, per architecture; tests/verify_oldest_versions.py writes it
+OLDEST_VERSIONS_FILE = Path(__file__).with_name("oldest_versions.json")
+
+
+@functools.cache
+def _oldest_versions() -> dict[str, dict[str, str]]:
+    """Load the recorded oldest installable version of each program, per architecture."""
+    recorded: dict[str, dict[str, str]] = json.loads(OLDEST_VERSIONS_FILE.read_text())
+    return recorded
 
 
 @dataclass(frozen=True)
@@ -208,9 +224,9 @@ class Program(ABC):
             return Availability(ok=False, reason=f"has no build for {config.arch}")
         return Availability(ok=True)
 
-    def _ensure_install_dir(self) -> None:
+    def _ensure_install_root(self) -> None:
         """
-        Ensure the install directory exists.
+        Ensure the install root exists.
 
         The CLI runs a privilege preflight that creates the shared install root under
         elevation and explains why before prompting, so by the time this runs the root
@@ -234,8 +250,42 @@ class Program(ABC):
                     "or set ROOKERY_INSTALL_DIR to a directory you own."
                 ) from exc
 
-        # Create program-specific directory (should not need sudo after base exists)
-        self.install_dir.mkdir(parents=True, exist_ok=True)
+    def _previous_install_name(self) -> Path:
+        """
+        Return a fresh path the current install moves to while a new one takes its place.
+
+        Returns
+        -------
+        Path
+            A temporary path beside the install directory, marked as a previous install.
+        """
+        return temp_name_for(self.install_dir.with_name(f"{self.name}.previous"))
+
+    def recover_interrupted_install(self) -> None:
+        """
+        Clean up after an install that was killed partway through.
+
+        An install stages its payload, and moves the current install aside, under
+        temporary names beside the install directory, and writes `.version` last. A run
+        killed after parking the previous install and before writing `.version` leaves
+        the install directory absent or incomplete, so a parked copy holding `.version`
+        is moved back. Leftovers are discarded once the install directory is complete;
+        until then they are kept, since one may be the only copy of the program. The
+        state lock calls this on acquisition, when no install of the program is running.
+        """
+        root = config.install_dir
+        if not self.version_file.exists():
+            complete = [path for path in root.glob(f".{self.name}.previous.*.tmp") if (path / ".version").exists()]
+            if len(complete) > 0:
+                if self.install_dir.exists() or self.install_dir.is_symlink():
+                    self.install_dir.replace(temp_name_for(self.install_dir))
+                newest = max(complete, key=lambda path: (path / ".version").stat().st_mtime)
+                newest.replace(self.install_dir)
+        if not self.version_file.exists():
+            return
+        for leftover in root.glob(f".{self.name}.*.tmp"):
+            if is_temp_name(leftover.name):
+                discard_path(leftover)
 
     @abstractmethod
     async def get_latest_version(self) -> str:
@@ -304,30 +354,51 @@ class Program(ABC):
         Execute complete installation procedure.
 
         Follows standard phases:
-        1. Initialize
-        2. Execute operations
-        3. Create generated files
-        4. Write version file
+        1. Initialize and execute operations in a staging directory
+        2. Swap the staged payload into the install directory
+        3. Create generated files and check the files linking reads are present
+        4. Write state, then the version file that marks the install complete
 
-        If installation fails, cleans up partial installation.
+        The current install stays in place, untouched, while downloads and extraction
+        run. Generated files are written after the swap because they may embed the final
+        install path. A failure before the swap discards the staging directory; a failure
+        after it restores the previous install, so either way the program's own files are
+        left as they were before the attempt.
 
         Parameters
         ----------
         version : str
             Version to install.
         """
+        # The lock excludes other installs of this program and, on acquisition, recovers
+        # from one that was killed partway through.
+        async with program_state_lock_async(self, required=True):
+            await self._install_locked(version)
+
+    async def _install_locked(self, version: str) -> None:
+        """
+        Run the installation procedure described in `install`, with the state lock held.
+
+        Parameters
+        ----------
+        version : str
+            Version to install.
+        """
+        self._ensure_install_root()
+
+        final_dir = self.install_dir
+        staging = temp_name_for(final_dir)
+        staging.mkdir()
+        # The state file carries the pin and link records across the swap
+        state_file = state_path_for(self)
+        if state_file.exists():
+            shutil.copy2(state_file, staging / state_file.name)
+
+        # Phase 1: Initialize and execute operations against the staging directory
+        self.install_dir = staging
         try:
-            # Ensure install directory exists with proper ownership
-            self._ensure_install_dir()
-
-            # Reclaim the temporaries a previous run left behind when it was killed
-            # partway through a write, so they stay out of the tree this run produces.
-            sweep_temp_files(self.install_dir)
-
-            # Phase 1: Initialize
             await self.initialize(version)
 
-            # Phase 2: Execute operations
             operations = await self.get_install_operations(version)
             if len(operations) > 0:
                 # Each install downloads into its own private directory, so concurrent
@@ -336,7 +407,7 @@ class Program(ABC):
                 download_dir = Path(tempfile.mkdtemp(prefix=f"rookery-{self.name}-", dir=config.temp_dir))
                 installer = Installer(download_dir=download_dir)
                 context = InstallContext(
-                    install_dir=self.install_dir,
+                    install_dir=staging,
                     installer=installer,
                 )
 
@@ -345,21 +416,65 @@ class Program(ABC):
                         await operation.execute(context)
                 finally:
                     shutil.rmtree(download_dir, ignore_errors=True)
-
-            # Phase 3: Create generated files
-            await self.create_generated_files(version)
-
-            # Phase 4: Write version file
-            self.write_version_file(version)
-
-            # Phase 5: Record structured state (resolved identity), preserving any existing pin
-            self._record_installed_state(version)
-
-        except Exception:
-            # Installation failed - clean up partial installation
-            if self.install_dir.exists() and not self.version_file.exists():
-                shutil.rmtree(self.install_dir)
+        except BaseException:
+            discard_path(staging)
             raise
+        finally:
+            self.install_dir = final_dir
+
+        # Phase 2: Swap the staged payload into place, keeping the previous install aside.
+        # The parking path is chosen before any rename, so a rollback can tell from it
+        # whether the previous install has moved.
+        previous = self._previous_install_name() if final_dir.exists() else None
+        try:
+            if previous is not None:
+                final_dir.replace(previous)
+            staging.replace(final_dir)
+
+            # Phase 3: Create generated files, then confirm every file linking reads is present
+            await self.create_generated_files(version)
+            self.get_binary_paths()
+            self.get_man_pages()
+            self.get_desktop_entry()
+
+            # Phase 4: Record structured state (resolved identity), preserving any pin, then
+            # the version file, whose presence marks the install complete
+            self._record_installed_state(version)
+            self.write_version_file(version)
+        except BaseException:
+            self._roll_back(staging, previous)
+            raise
+
+        if previous is not None:
+            discard_path(previous)
+
+    def _roll_back(self, staging: Path, previous: Path | None) -> None:
+        """
+        Return the install directory to its state before a failed swap.
+
+        Works out which renames completed: a previous install that was never parked
+        means the install directory is untouched. Otherwise whatever occupies the
+        install directory is moved aside before the previous install is renamed back,
+        so the restore stays a rename even when the failed tree resists deletion.
+
+        Parameters
+        ----------
+        staging : Path
+            The staging directory, which may already have been renamed into place.
+        previous : Path | None
+            Where the previous install was to be parked, None when there was none.
+        """
+        discard_path(staging)
+        if previous is not None and not previous.exists():
+            return
+        failed = None
+        if self.install_dir.exists() or self.install_dir.is_symlink():
+            failed = temp_name_for(self.install_dir)
+            self.install_dir.replace(failed)
+        if previous is not None:
+            previous.replace(self.install_dir)
+        if failed is not None:
+            discard_path(failed)
 
     def get_binary_paths(self) -> list[Path]:
         """
@@ -533,7 +648,8 @@ class Program(ABC):
         Raises
         ------
         ValueError
-            If an exact version is requested but this program does not support it.
+            If an exact version is requested but this program does not support it, or
+            the version predates the oldest one its recipe installs.
         """
         spec = requested if requested is not None else "latest"
         if spec != "latest" and not self.supports_exact_versions():
@@ -541,7 +657,25 @@ class Program(ABC):
         if self.version_source is None:
             version = await self.get_latest_version() if spec == "latest" else spec
             return VersionResolution(requested=spec, version=version, upstream_id=version, source="legacy")
-        return await self.version_source.resolve(spec)
+        resolution = await self.version_source.resolve(spec)
+        oldest = self.oldest_supported_version()
+        if spec != "latest" and oldest is not None and compare_versions(resolution.version, oldest) < 0:
+            raise ValueError(
+                f"{self.name} {resolution.version} predates {oldest}, "
+                f"the oldest version rookery installs on {config.arch}."
+            )
+        return resolution
+
+    def oldest_supported_version(self) -> str | None:
+        """
+        Return the oldest version this program's recipe installs on the host architecture.
+
+        Returns
+        -------
+        str | None
+            The version recorded in oldest_versions.json, or None when none is recorded.
+        """
+        return _oldest_versions().get(self.name, {}).get(config.arch)
 
     def supports_exact_versions(self) -> bool:
         """

@@ -30,7 +30,7 @@ def isolated_install_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pat
     return install_dir
 
 
-def _install_pinned(name: str, version: str, *, reason: str | None = None) -> None:
+def _install_pinned(name: str, version: str) -> None:
     prog = get_program(name)
     prog.install_dir.mkdir(parents=True, exist_ok=True)
     prog.version_file.write_text(f"{version}\n")
@@ -50,7 +50,6 @@ def _install_pinned(name: str, version: str, *, reason: str | None = None) -> No
             upstream_id=f"v{version}",
             source="github-release",
             pinned_at="2026-06-25T00:01:00Z",
-            reason=reason,
         ),
     )
     prog.write_state(state)
@@ -117,7 +116,7 @@ def test_list_empty_suggests_all_flag(isolated_install_dir: Path) -> None:
 
 
 def test_pins_lists_pinned(isolated_install_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _install_pinned("bat", "0.25.0", reason="stability")
+    _install_pinned("bat", "0.25.0")
 
     async def fake_latest(programs: list[object]) -> list[str | None]:
         return ["0.25.1" for _ in programs]

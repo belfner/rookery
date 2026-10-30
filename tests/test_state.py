@@ -64,7 +64,6 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
             upstream_id="v1.2.3",
             source="github-release",
             pinned_at="2026-06-25T00:01:00Z",
-            reason="hold",
         ),
     )
     write_program_state_atomic(prog, state)
@@ -73,7 +72,6 @@ def test_write_then_read_roundtrip(tmp_path: Path) -> None:
     assert restored.installed is not None
     assert restored.installed.metadata == {"github_repo": "owner/repo"}
     assert restored.pin is not None
-    assert restored.pin.reason == "hold"
     assert restored.is_pinned is True
 
 

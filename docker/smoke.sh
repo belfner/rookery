@@ -50,12 +50,11 @@ pass "uname -m reports $arch"
 rookery --version
 
 section "Detection"
-output=$(rookery status 2>&1)
+output=$(rookery info 2>&1)
 printf '%s\n' "$output"
-expect_text "status detects $arch" "Architecture: $arch (detected)" "$output"
-expect_text "info detects $arch" "Architecture: $arch" "$(rookery info 2>&1)"
+expect_text "info detects $arch" "Architecture: $arch (detected)" "$output"
 expect_text "ROOKERY_ARCH=$other_alias overrides detection" "Architecture: $other (ROOKERY_ARCH)" \
-    "$(ROOKERY_ARCH=$other_alias rookery status 2>&1)"
+    "$(ROOKERY_ARCH=$other_alias rookery info 2>&1)"
 expect_text "invalid ROOKERY_ARCH is a configuration error" "ROOKERY_ARCH must be one of" \
     "$(ROOKERY_ARCH=armv7 rookery list 2>&1)"
 

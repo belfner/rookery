@@ -37,14 +37,13 @@ from rookery.config import (
     PathSource,
     config,
 )
+from rookery.health_checks import HEALTH_CHECKS
 from rookery.link_status import (
     compute_link_removal_status,
     compute_link_status,
     compute_link_status_for_list,
 )
 from rookery.privilege import (
-    RootState,
-    inspect_install_root,
     preflight,
     require_writable_integration,
 )
@@ -61,7 +60,6 @@ from rookery.state import (
     program_state_lock,
     program_state_lock_async,
 )
-from rookery.status_checks import STATUS_CHECKS
 from rookery.sudo import SudoManager
 from rookery.sudo_requirement import SudoRequirement
 from rookery.system import SystemLinker
@@ -220,7 +218,6 @@ def _install_single(
     force: bool,
     yes: bool,
     allow_foreign_root: bool,
-    reason: str | None = None,
 ) -> None:
     """
     Resolve, optionally preview, install, and pin/unpin a single program.
@@ -243,8 +240,6 @@ def _install_single(
         Skip the version-switch confirmation prompt.
     allow_foreign_root : bool
         Skip the confirmation for links into another install root.
-    reason : str | None
-        Optional pin reason, by default None.
     """
     try:
         prog = get_program(name)
@@ -321,7 +316,7 @@ def _install_single(
             await install_or_update_program(
                 prog, resolution.version, console, sudo_mgr, not no_links, resolution=resolution
             )
-            pinned = pin_installed_version(prog, reason=reason).version if pin else None
+            pinned = pin_installed_version(prog).version if pin else None
             cleared = unpin_program(prog) if unpin else False
         return pinned, cleared, None
 
@@ -1125,100 +1120,15 @@ def unlink_command(
 @app.command(name="info")
 def info_command() -> None:
     """
-    Display configuration and system information.
+    Show rookery's health checks, configuration, installed programs, and pins.
 
-    Shows all configured paths, their sources (environment variable or default),
-    tool version, Python version, target architecture, and installation statistics.
+    The checks cover the architecture, the install root, whether the bin directory is on
+    PATH, linked commands an earlier PATH entry shadows, and commands that point into
+    another rookery install root. Exits with status 1 when any check warns.
     """
-    console.print("\n[bold cyan]Rookery Configuration[/bold cyan]\n")
+    console.print(f"\n[bold cyan]Rookery {__version__}[/] [dim](Python {sys.version.split()[0]})[/]\n")
 
-    # Tool and system info
-    console.print("[bold]Tool Information:[/bold]")
-    console.print(f"  Version: {__version__}")
-    console.print(f"  Python: {sys.version.split()[0]}")
-    arch_source = "[yellow]ROOKERY_ARCH[/yellow]" if os.getenv("ROOKERY_ARCH") is not None else "[dim]detected[/dim]"
-    console.print(f"  Architecture: {config.arch} ({arch_source})")
-
-    # GitHub Configuration
-    github_token = os.environ.get("GITHUB_TOKEN")
-    gh_token = os.environ.get("GH_TOKEN")
-
-    if github_token is not None:
-        token_status = "[green]Configured (GITHUB_TOKEN)[/green]"
-    elif gh_token is not None:
-        token_status = "[green]Configured (GH_TOKEN)[/green]"
-    else:
-        token_status = "[yellow]Not set (60 requests/hour)[/yellow]"
-
-    console.print(f"  GitHub Token: {token_status}")
-    console.print(f"  Max Parallel: {config.max_parallel}")
-    console.print()
-
-    # Configuration paths
-    console.print("[bold]Configuration Paths:[/bold]")
-
-    paths_info = [
-        ("Install Directory", config.install_dir, "ROOKERY_INSTALL_DIR"),
-        ("Binary Directory", config.bin_dir, "ROOKERY_BIN_DIR"),
-        ("Desktop Directory", config.desktop_dir, "ROOKERY_DESKTOP_DIR"),
-        ("Man Pages Directory", config.man_dir, "ROOKERY_MAN_DIR"),
-        ("Temp Directory", config.temp_dir, "ROOKERY_TEMP_DIR"),
-    ]
-
-    for label, path, env_var in paths_info:
-        source_type, _ = config.get_path_source(path)
-        source_display = f"[yellow]{env_var}[/yellow]" if source_type == PathSource.ENV else "[dim]default[/dim]"
-        console.print(f"  {label}: {path}")
-        console.print(f"    Source: {source_display}")
-
-    console.print()
-
-    # Installation statistics
-    console.print("[bold]Installation Statistics:[/bold]")
-
-    # Count installed programs
-    if config.install_dir.exists():
-        installed_programs = [d for d in config.install_dir.iterdir() if d.is_dir() and (d / ".version").exists()]
-        console.print(f"  Installed Programs: {len(installed_programs)}")
-
-        # Disk usage
-        if shutil.which("du"):
-            try:
-                result = subprocess.run(
-                    ["du", "-sh", str(config.install_dir)],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                disk_usage = result.stdout.split()[0]
-                console.print(f"  Disk Usage: {disk_usage}")
-            except subprocess.CalledProcessError:
-                console.print("  Disk Usage: [dim]unavailable[/dim]")
-
-        # Show if install directory is writable
-        writable = inspect_install_root(config.install_dir) is RootState.WRITABLE
-        writable_status = (
-            "[green]Yes[/green]" if writable else "[red]No (set ROOKERY_INSTALL_DIR to a directory you own)[/red]"
-        )
-        console.print(f"  Install Directory Writable: {writable_status}")
-    else:
-        console.print("  Installed Programs: 0")
-        console.print(f"  [yellow]Install directory does not exist yet: {config.install_dir}[/yellow]")
-
-    console.print()
-
-
-@app.command(name="status")
-def status_command() -> None:
-    """
-    Check that installed programs are reachable and managed by this install root.
-
-    Reports the install root, whether the bin directory is on PATH, and any commands
-    in the bin directory that point into another rookery install root. Exits with
-    status 1 when any check warns.
-    """
-    results = [check() for check in STATUS_CHECKS]
-    console.print()
+    results = [check() for check in HEALTH_CHECKS]
     for result in results:
         mark = "[green]✓[/]" if result.ok else "[yellow]⚠[/]"
         console.print(f"{mark} [bold]{result.label}[/]: {result.summary}")
@@ -1227,6 +1137,54 @@ def status_command() -> None:
                 console.print(f"    [dim]{detail}[/]")
             else:
                 console.print(Padding(detail, (0, 0, 0, 4), expand=False))
+    console.print()
+
+    console.print("[bold]Configuration:[/bold]")
+    if os.environ.get("GITHUB_TOKEN") is not None:
+        token_status = "[green]Configured (GITHUB_TOKEN)[/green]"
+    elif os.environ.get("GH_TOKEN") is not None:
+        token_status = "[green]Configured (GH_TOKEN)[/green]"
+    else:
+        token_status = "[yellow]Not set (60 requests/hour)[/yellow]"
+    console.print(f"  GitHub Token: {token_status}")
+    console.print(f"  Max Parallel: {config.max_parallel}")
+    paths_info = [
+        ("Desktop Directory", config.desktop_dir, "ROOKERY_DESKTOP_DIR"),
+        ("Man Pages Directory", config.man_dir, "ROOKERY_MAN_DIR"),
+        ("Temp Directory", config.temp_dir, "ROOKERY_TEMP_DIR"),
+    ]
+    for label, path, env_var in paths_info:
+        source_type, _ = config.get_path_source(path)
+        source_display = f"[yellow]{env_var}[/yellow]" if source_type == PathSource.ENV else "[dim]default[/dim]"
+        console.print(f"  {label}: {path} ({source_display})")
+    console.print()
+
+    try:
+        installed = [prog for prog in list_programs() if prog.version_file.exists()]
+        pinned = sorted(
+            ((prog, pin) for prog in installed if (pin := get_pin(prog)) is not None),
+            key=lambda item: item[0].name.casefold(),
+        )
+    except OSError as e:
+        # The install root check above already reports why the root cannot be read
+        console.print(f"[bold]Installed:[/bold] [dim]unavailable ({e.strerror})[/]\n")
+        raise typer.Exit(1) from None
+    summary = [f"{len(installed)} programs"]
+    if len(installed) > 0 and shutil.which("du") is not None:
+        usage = subprocess.run(["du", "-sh", str(config.install_dir)], capture_output=True, text=True)
+        if usage.returncode == 0:
+            summary.append(f"{usage.stdout.split()[0]} on disk")
+    summary.append(f"{len(pinned)} pinned")
+    console.print(f"[bold]Installed:[/bold] {', '.join(summary)}")
+
+    if len(pinned) > 0:
+        table = Table(title="Pinned programs")
+        table.add_column("Program", style="cyan", no_wrap=True)
+        table.add_column("Version", style="green")
+        for prog, pin in pinned:
+            table.add_row(prog.name, pin.version)
+        console.print()
+        console.print(table)
     console.print()
 
     if not all(result.ok for result in results):
@@ -1244,8 +1202,8 @@ def versions_command(
     """
     List available versions for a program.
 
-    Shows release date and whether each version is the latest, installed, or pinned.
-    Programs that only expose a single bundled version, or that do not support exact
+    Shows release date and whether each version is the latest, installed, or pinned,
+    back to the oldest version rookery installs on this architecture. Programs that only expose a single bundled version, or that do not support exact
     selection yet, report their latest available version instead.
     """
     try:
@@ -1296,7 +1254,8 @@ def versions_command(
             }
             for row in rows
         ]
-        print(json.dumps({"program": program, "supports_exact": True, "versions": payload}))
+        oldest = prog.oldest_supported_version()
+        print(json.dumps({"program": program, "supports_exact": True, "oldest_supported": oldest, "versions": payload}))
         return
 
     table = Table(title=f"Available versions for {program}")
@@ -1317,6 +1276,9 @@ def versions_command(
         table.add_row(row.version, row.released_at, ",".join(status_parts))
 
     console.print(table)
+    oldest = prog.oldest_supported_version()
+    if oldest is not None:
+        console.print(f"[dim]Oldest version rookery installs on {config.arch}: {oldest}[/]")
 
 
 @app.command(name="pin")
@@ -1324,7 +1286,6 @@ def pin_command(
     program: Annotated[str, typer.Argument(help="Program name to pin")],
     version: Annotated[str | None, typer.Argument(help="Version to pin (defaults to installed)")] = None,
     install: Annotated[bool, typer.Option("--install", help="Install the version, then pin it")] = False,
-    reason: Annotated[str | None, typer.Option("--reason", help="Reason for the pin")] = None,
     allow_foreign_root: AllowForeignRootFlag = False,
 ) -> None:
     """
@@ -1344,7 +1305,6 @@ def pin_command(
             force=False,
             yes=False,
             allow_foreign_root=allow_foreign_root,
-            reason=reason,
         )
         return
 
@@ -1378,7 +1338,7 @@ def pin_command(
                 )
                 raise typer.Exit(1)
 
-        pinned = pin_installed_version(prog, reason=reason)
+        pinned = pin_installed_version(prog)
 
     console.print(f"[green]✓ Pinned {program} to {pinned.version}[/]")
     _emit_pin_warning(prog)
@@ -1410,7 +1370,7 @@ def pins_command(
     json_output: Annotated[bool, typer.Option("--json", help="Emit machine-readable JSON")] = False,
 ) -> None:
     """
-    List all pinned programs with their pinned version, latest available, and reason.
+    List all pinned programs with their pinned version and the latest available.
     """
     programs = list_programs()
     installed = [p for p in programs if p.version_file.exists()]
@@ -1440,7 +1400,6 @@ def pins_command(
                 "program": prog.name,
                 "version": pin.version,
                 "latest": latest,
-                "reason": pin.reason,
             }
             for (prog, pin), latest in pinned_rows
         ]
@@ -1451,10 +1410,9 @@ def pins_command(
     table.add_column("Program", style="cyan", no_wrap=True)
     table.add_column("Version", style="green")
     table.add_column("Latest", style="yellow")
-    table.add_column("Reason", style="dim")
 
     for (prog, pin), latest in pinned_rows:
-        table.add_row(prog.name, pin.version, latest or "?", pin.reason or "")
+        table.add_row(prog.name, pin.version, latest or "?")
 
     console.print(table)
 

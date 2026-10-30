@@ -45,6 +45,13 @@ LOCK_SUFFIX = ".rookery-lock"
 LOCK_POLL_SECONDS = 0.05
 """Delay between non-blocking acquisition attempts in the async lock."""
 
+_HOLDERS: dict[str, object] = {}
+"""Owner currently holding each program's lock file under flock, keyed by program name.
+
+A scope that went ahead without the lock file is absent here, which lets a nested scope
+that requires the lock tell a real lock from that fallback.
+"""
+
 _LOCK_STATE = threading.local()
 """Per-thread map of owner to nesting depth per lock file.
 
@@ -151,8 +158,6 @@ class PinState:
         Name of the version source used.
     pinned_at : str
         ISO 8601 pin timestamp.
-    reason : str | None
-        Optional free-text reason for the pin.
     """
 
     enabled: bool
@@ -160,7 +165,6 @@ class PinState:
     upstream_id: str
     source: str
     pinned_at: str
-    reason: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a JSON-ready dict."""
@@ -170,20 +174,17 @@ class PinState:
             "upstream_id": self.upstream_id,
             "source": self.source,
             "pinned_at": self.pinned_at,
-            "reason": self.reason,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PinState:
         """Build from a parsed JSON dict."""
-        reason = data.get("reason")
         return cls(
             enabled=bool(data.get("enabled", True)),
             version=str(data["version"]),
             upstream_id=str(data.get("upstream_id", data["version"])),
             source=str(data.get("source", LEGACY_SOURCE)),
             pinned_at=str(data.get("pinned_at", "")),
-            reason=None if reason is None else str(reason),
         )
 
 
@@ -450,6 +451,44 @@ def _open_lock_file(program: _ProgramLike) -> IO[str] | None:
         return None
 
 
+def _lock_unavailable(program: _ProgramLike) -> PermissionError:
+    """
+    Build the error a required lock raises when its scope runs without the lock.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose lock could not be held.
+
+    Returns
+    -------
+    PermissionError
+        Error naming the lock directory and how to change it.
+    """
+    return PermissionError(
+        f"Cannot lock {program.name} through a lock file in {config.lock_dir}; "
+        "set ROOKERY_LOCK_DIR to a writable directory."
+    )
+
+
+def _recover_interrupted_install(program: _ProgramLike) -> None:
+    """
+    Run a program's recovery from an install killed partway through, if it has one.
+
+    Recovery renames and discards directories an install in flight would be using, so
+    it runs only once the outermost scope holds the lock, which excludes every other
+    install of the program.
+
+    Parameters
+    ----------
+    program : _ProgramLike
+        Program whose lock was just acquired.
+    """
+    recover = getattr(program, "recover_interrupted_install", None)
+    if recover is not None:
+        recover()
+
+
 @contextmanager
 def program_state_lock(program: _ProgramLike) -> Iterator[None]:
     """
@@ -491,16 +530,19 @@ def program_state_lock(program: _ProgramLike) -> Iterator[None]:
 
         with handle:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            _HOLDERS[key] = _current_owner()
             try:
+                _recover_interrupted_install(program)
                 yield
             finally:
+                del _HOLDERS[key]
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     finally:
         _release_depth(depths, key)
 
 
 @asynccontextmanager
-async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]:
+async def program_state_lock_async(program: _ProgramLike, *, required: bool = False) -> AsyncIterator[None]:
     """
     Hold a program's state lock without blocking the event loop.
 
@@ -512,6 +554,15 @@ async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]
     ----------
     program : _ProgramLike
         Program whose state is being changed.
+    required : bool
+        True raises instead of running the block without the lock file, for work that
+        is unsafe unless other processes are excluded. By default False.
+
+    Raises
+    ------
+    PermissionError
+        ``required`` is True and the lock file cannot be opened, or an enclosing scope
+        of this owner went ahead without it.
 
     Yields
     ------
@@ -525,11 +576,15 @@ async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]
 
     try:
         if held > 0:
+            if required and _HOLDERS.get(key) is not _current_owner():
+                raise _lock_unavailable(program)
             yield
             return
 
         handle = _open_lock_file(program)
         if handle is None:
+            if required:
+                raise _lock_unavailable(program)
             yield
             return
 
@@ -540,9 +595,12 @@ async def program_state_lock_async(program: _ProgramLike) -> AsyncIterator[None]
                     break
                 except BlockingIOError:
                     await asyncio.sleep(LOCK_POLL_SECONDS)
+            _HOLDERS[key] = _current_owner()
             try:
+                _recover_interrupted_install(program)
                 yield
             finally:
+                del _HOLDERS[key]
                 fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     finally:
         _release_depth(depths, key)

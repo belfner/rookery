@@ -1,4 +1,4 @@
-.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check relock-scripts test-docker test-docker-x86_64 test-docker-aarch64
+.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check relock-scripts verify-oldest-versions test-docker test-docker-x86_64 test-docker-aarch64
 
 clean:
 	rm -rf dist/ build/ *.egg-info src/*.egg-info
@@ -41,6 +41,10 @@ check: lint format-check typecheck test
 
 relock-scripts:
 	uv run python -m tests.relock_script_versions
+
+# Install releases into throwaway roots to record the oldest each recipe handles; see tests/verify_oldest_versions.py
+verify-oldest-versions:
+	uv run python -m tests.verify_oldest_versions
 
 # pytest plus a live install of the catalog in an Ubuntu container per architecture; see docker/Dockerfile
 test-docker: test-docker-x86_64 test-docker-aarch64

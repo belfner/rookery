@@ -115,6 +115,17 @@ Programs whose desktop entry needs no runtime values can instead set the
 `desktop_entry_config` class attribute, which the default `get_desktop_entry()`
 returns when the program has binaries.
 
+## Install Procedure
+
+`Program.install` runs `initialize` and the install operations against a staging directory beside
+the install directory, then swaps the staged tree into place and runs `create_generated_files`,
+the `.version` write, and the state record at the final path. `self.install_dir` names the
+staging directory while `initialize` and `get_install_operations` run and the final directory
+from `create_generated_files` on, so a generated file that embeds an absolute install path (an
+AppImage wrapper, a helper script) gets the final one. A failure at any phase leaves the previous
+install in place, and each install starts from an empty directory holding only the carried-over
+`.rookery-state.json`.
+
 ## Default Install Set
 
 `install --default` installs the uninstalled programs whose `default_install` class attribute is True, which `Program` sets for every program. A program that belongs in the catalog but outside the default set declares `default_install = False`; `install --all` still installs it, and `list --all` leaves its Default cell blank.
@@ -165,6 +176,15 @@ otherwise:
 tag = self.upstream_tag_for(version)
 man_url = f"https://github.com/{self.github_repo}/releases/download/{tag}/man.tgz"
 ```
+
+**Oldest installable version.** `src/rookery/oldest_versions.json` records, per program and
+architecture, the oldest release the program's recipe installs. `resolve_version` refuses an
+exact request older than it, and `rookery versions` lists releases back to it. `make
+verify-oldest-versions` finds these versions by installing releases into throwaway roots
+(`tests/verify_oldest_versions.py`; `--program NAME` limits it to one program). Run it after
+adding a program with exact-version support and after changing a recipe's operations, since
+a new operation (a man page download, a path inside the archive) can move the oldest release
+that still installs.
 
 **Shell-script programs** declare the version their bundled payload is at, and
 `ShellScriptProgram.__init__` attaches a `StaticVersionSource` carrying it. That single version is

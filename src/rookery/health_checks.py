@@ -1,7 +1,7 @@
-"""Health checks reported by the `status` command.
+"""Health checks reported by the `info` command.
 
 Each check is a function that inspects the current configuration and returns a
-:class:`CheckResult`. ``STATUS_CHECKS`` lists them in display order.
+:class:`CheckResult`. ``HEALTH_CHECKS`` lists them in display order.
 """
 
 from __future__ import annotations
@@ -123,12 +123,14 @@ def check_bin_dir_on_path() -> CheckResult:
     CheckResult
         Passes when the bin directory is a PATH entry.
     """
+    source, _ = config.get_path_source(config.bin_dir)
+    origin = "ROOKERY_BIN_DIR" if source is PathSource.ENV else "default"
     if check_path_in_user_path_env(config.bin_dir):
-        return CheckResult("Bin directory", True, f"{config.bin_dir} (on PATH)")
+        return CheckResult("Bin directory", True, f"{config.bin_dir} ({origin}, on PATH)")
     return CheckResult(
         "Bin directory",
         False,
-        f"{config.bin_dir} is not on PATH, so installed commands will not be found",
+        f"{config.bin_dir} ({origin}) is not on PATH, so installed commands will not be found",
         [
             "Add this to your ~/.bashrc or ~/.zshrc:",
             f'export PATH="{shell_path(config.bin_dir)}:$PATH"',
@@ -195,7 +197,7 @@ def check_foreign_roots() -> CheckResult:
     )
 
 
-STATUS_CHECKS: tuple[Callable[[], CheckResult], ...] = (
+HEALTH_CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_architecture,
     check_install_root,
     check_bin_dir_on_path,
