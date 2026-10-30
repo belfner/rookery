@@ -108,6 +108,7 @@ runs=(
     "dysk|dysk --version"
     "eza|eza --version"
     "fastfetch|fastfetch --version"
+    "fzf|fzf --version"
     "gdu|gdu --version"
     "gping|gping --version"
     "helm|helm version --short"
@@ -129,7 +130,7 @@ check "install drawio" rookery install drawio
 expect_native "drawio AppImage" "$(find ~/.local/share/rookery-programs/drawio -name '*.AppImage' | head -n 1)"
 
 section "Any-architecture programs"
-for program in clip cuda-run fasttarutils imcat kpod meetrec tarssh; do
+for program in clip cuda-run fasttarutils imcat kpod meetrec mtmux tarssh; do
     check "install $program" rookery install "$program"
 done
 expect_native "imcat (built from source)" "$(command -v imcat)"

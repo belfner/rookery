@@ -109,6 +109,7 @@ Rookery installs the build matching the host architecture, x86_64 or aarch64, as
 | eza | GitHub binary | x86_64, aarch64 | Modern `ls` replacement |
 | fastfetch | GitHub binary | x86_64, aarch64 | System information tool, plus a `get-distro` helper that prints the OS name (needs `jq`) |
 | fasttarutils | Python script | any | Multi-format tar, 7z, and zip compression/extraction (ftar/funtar) with parallel backends |
+| fzf | GitHub binary | x86_64, aarch64 | Command-line fuzzy finder |
 | gdu | GitHub binary | x86_64, aarch64 | Disk usage analyzer |
 | gping | GitHub binary | x86_64, aarch64 | Ping with a graph |
 | helm | Standalone | x86_64, aarch64 | Kubernetes package manager |
@@ -118,6 +119,7 @@ Rookery installs the build matching the host architecture, x86_64 or aarch64, as
 | kpod | Shell script | any | `kubectl` wrappers that resolve a pod by name prefix |
 | mc | Standalone | x86_64, aarch64 | MinIO Client for S3-compatible object storage |
 | meetrec | Python script | any | Record meeting audio as separate system and microphone Opus tracks plus a mix, via ffmpeg, with an idle warning and auto-stop |
+| mtmux | Shell script | any | Attach to or create a tmux session named after the current directory, with the parent path hashed in to keep names unique (needs tmux 3.2+) |
 | netron | GitHub .deb | x86_64 | Neural network model viewer |
 | nvim | GitHub binary | x86_64, aarch64 | Hyperextensible Vim-based editor |
 | storageexplorer | GitHub binary | x86_64 | Azure Storage Explorer |
