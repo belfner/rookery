@@ -279,6 +279,13 @@ uv run rookery info
 make check          # lint, format check, typecheck, tests
 ```
 
+`make test-docker` runs the test suite and a live install of the catalog in an Ubuntu container for each architecture (`make test-docker-x86_64` and `make test-docker-aarch64` run one). The container user has passwordless sudo, so the apt-installed programs and an install root created with sudo get exercised too. Each run downloads every program the architecture supports, about 0.5 GB more on x86_64 for blender and storageexplorer. The architecture foreign to the host runs under qemu emulation, which needs registering once per boot; `docker/test.sh` checks for it and prints the command when it is missing:
+
+```bash
+docker run --privileged --rm tonistiigi/binfmt --install arm64   # on an x86_64 host
+docker run --privileged --rm tonistiigi/binfmt --install amd64   # on an aarch64 host
+```
+
 ## Adding a Program
 
 Create a `Program` subclass in `src/rookery/programs/`. Programs are discovered automatically at runtime. See `agent_docs/new_program.md` for the template and conventions.

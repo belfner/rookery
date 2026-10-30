@@ -1,0 +1,11 @@
+# The image needs the package sources, the test suite, and the container scripts alone
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!LICENSE
+!src/
+!tests/
+!docker/run.sh
+!docker/smoke.sh
+**/__pycache__

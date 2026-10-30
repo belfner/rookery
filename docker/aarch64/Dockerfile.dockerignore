@@ -1,9 +1,0 @@
-# The image needs the package sources and the smoke script alone
-*
-!pyproject.toml
-!uv.lock
-!README.md
-!LICENSE
-!src/
-!docker/aarch64/smoke.sh
-**/__pycache__

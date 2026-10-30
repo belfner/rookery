@@ -1,4 +1,4 @@
-.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check relock-scripts test-aarch64
+.PHONY: clean build publish publish-test install dev test lint format format-check typecheck check relock-scripts test-docker test-docker-x86_64 test-docker-aarch64
 
 clean:
 	rm -rf dist/ build/ *.egg-info src/*.egg-info
@@ -42,7 +42,11 @@ check: lint format-check typecheck test
 relock-scripts:
 	uv run python -m tests.relock_script_versions
 
-# Installs the catalog in an arm64 container and runs each program; see docker/aarch64/Dockerfile
-test-aarch64:
-	docker build --platform linux/arm64 -f docker/aarch64/Dockerfile -t rookery-aarch64 .
-	docker run --rm --platform linux/arm64 -e GITHUB_TOKEN -e GH_TOKEN rookery-aarch64
+# pytest plus a live install of the catalog in an Ubuntu container per architecture; see docker/Dockerfile
+test-docker: test-docker-x86_64 test-docker-aarch64
+
+test-docker-x86_64:
+	docker/test.sh x86_64
+
+test-docker-aarch64:
+	docker/test.sh aarch64
